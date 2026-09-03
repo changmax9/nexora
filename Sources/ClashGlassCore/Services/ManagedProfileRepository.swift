@@ -59,7 +59,7 @@ public struct ManagedProfileRepository: Sendable {
 
     public static func defaultRootURL() -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Clash Glass", isDirectory: true)
+            .appendingPathComponent("Nexora", isDirectory: true)
     }
 
     @MainActor

@@ -128,7 +128,7 @@ struct ConnectionRow: View {
                     LiquidIconButton(
                         title: closeTitle,
                         symbol: "xmark",
-                        tint: .red.opacity(0.14),
+                        tint: palette.secondaryText.opacity(0.14),
                         size: 24
                     ) {
                         closeAction?()

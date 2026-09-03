@@ -26,6 +26,8 @@ import Testing
     try """
     mixed-port: 7890
     external-controller: '127.0.0.1:9090'
+    unified-delay: false
+    tcp-concurrent: false
     dns:
       enable: true
       listen: '127.0.0.1:5334'
@@ -50,8 +52,12 @@ import Testing
     let runtime = try String(contentsOf: prepared.configURL, encoding: .utf8)
 
     #expect(source.contains("mixed-port: 7890"))
+    #expect(source.contains("unified-delay: false"))
+    #expect(source.contains("tcp-concurrent: false"))
     #expect(runtime.contains("mixed-port: 7891"))
     #expect(runtime.contains("external-controller: '127.0.0.1:9091'"))
+    #expect(runtime.contains("unified-delay: true"))
+    #expect(runtime.contains("tcp-concurrent: true"))
     #expect(runtime.contains("listen: '127.0.0.1:5335'"))
     #expect(prepared.mixedPort == 7891)
     #expect(prepared.controllerURL.absoluteString == "http://127.0.0.1:9091")
@@ -177,6 +183,137 @@ import Testing
     #expect(store.validationState(for: brokenProfile.id).kind == .invalid)
     #expect(store.validationState(for: brokenProfile.id).message == "broken profile rejected")
     #expect(store.lastErrorMessage == "Broken: broken profile rejected")
+}
+
+@MainActor
+@Test func networkIdentityRefreshClearsStaleCountryWhenLookupFails() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let executableURL = directory.appendingPathComponent("fake-curl")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try """
+    #!/bin/sh
+    echo 'lookup failed' >&2
+    exit 7
+    """.write(to: executableURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+    let store = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: directory.appendingPathComponent("Managed")),
+        networkIdentityService: NetworkIdentityService(
+            directFetcher: DirectNetworkIdentityFetcher(executableURL: executableURL),
+            systemTunnelDetector: { false }
+        )
+    )
+    store.externalIP = "151.242.36.41"
+    store.networkCountryCode = "JP"
+    store.networkCountryName = "Japan"
+
+    await store.refreshNetworkIdentity()
+
+    #expect(store.externalIP == "Unavailable")
+    #expect(store.networkCountryCode.isEmpty)
+    #expect(store.networkCountryName.isEmpty)
+    #expect(store.networkEgressKind == .unavailable)
+}
+
+@MainActor
+@Test func networkIdentityRefreshFallsBackToDirectWhenStartedProxyLookupFails() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let executableURL = directory.appendingPathComponent("fake-curl")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try """
+    #!/bin/sh
+    printf '%s' '{"success":true,"ip":"203.0.113.8","country_code":"US","country":"United States"}'
+    """.write(to: executableURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+    let store = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: directory.appendingPathComponent("Managed")),
+        networkIdentityService: NetworkIdentityService(
+            directFetcher: DirectNetworkIdentityFetcher(executableURL: executableURL),
+            systemTunnelDetector: { false }
+        )
+    )
+    store.isStarted = true
+    store.httpPort = 1
+
+    await store.refreshNetworkIdentity()
+
+    #expect(store.externalIP == "203.0.113.8")
+    #expect(store.networkCountryCode == "US")
+    #expect(store.networkCountryName == "United States")
+    #expect(store.networkEgressKind == .direct)
+}
+
+@MainActor
+@Test func appStoreRunsNetworkDoctorFromCurrentRouteState() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let executableURL = directory.appendingPathComponent("fake-curl")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try """
+    #!/bin/sh
+    printf '%s' '{"success":true,"ip":"151.242.36.41","country_code":"JP","country":"Japan"}'
+    """.write(to: executableURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+    let store = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: directory.appendingPathComponent("Managed")),
+        networkIdentityService: NetworkIdentityService(
+            directFetcher: DirectNetworkIdentityFetcher(executableURL: executableURL),
+            systemTunnelDetector: { true }
+        ),
+        networkPortProbe: { targets in
+            targets.map { target in
+                NetworkPortCheck(
+                    label: target.label,
+                    port: target.port,
+                    isListening: target.port == 7890,
+                    ownerName: target.port == 7890 ? "ClashGlas" : nil,
+                    ownerPID: target.port == 7890 ? 97948 : nil
+                )
+            }
+        },
+        networkDNSProbe: { targets in
+            targets.map { target in
+                NetworkDNSCheck(
+                    host: target.host,
+                    addresses: target.host == "github.com" ? ["140.82.112.4"] : ["104.21.1.1"]
+                )
+            }
+        },
+        networkEndpointProbe: { targets in
+            targets.map { target in
+                NetworkEndpointCheck(
+                    name: target.name,
+                    url: target.url,
+                    isReachable: true,
+                    statusCode: 200,
+                    latencyMilliseconds: 142,
+                    errorMessage: nil
+                )
+            }
+        }
+    )
+
+    await store.runNetworkDiagnosis()
+
+    #expect(store.externalIP == "151.242.36.41")
+    #expect(store.networkEgressKind == .systemTunnel)
+    #expect(store.networkDiagnosticReport.severity == .warning)
+    #expect(store.networkDiagnosticReport.summary.contains("System tunnel"))
+    #expect(store.networkDiagnosticReport.copyText.contains("151.242.36.41"))
+    #expect(store.networkPortChecks.count == 3)
+    #expect(store.networkDNSChecks.count == 3)
+    #expect(store.networkEndpointChecks.count == 2)
+    #expect(store.networkDiagnosticReport.copyText.contains("ClashGlas"))
+    #expect(store.networkDiagnosticReport.copyText.contains("DNS resolution"))
+    #expect(store.networkDiagnosticReport.copyText.contains("External probes"))
 }
 
 @MainActor
@@ -320,9 +457,9 @@ import Testing
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
     let runtime = try String(contentsOf: prepared.configURL, encoding: .utf8)
 
-    #expect(!source.contains("Clash Glass routing overrides"))
-    #expect(runtime.contains("# Clash Glass routing overrides"))
-    #expect(runtime.contains("    # Clash Glass routing overrides"))
+    #expect(!source.contains("Nexora routing overrides"))
+    #expect(runtime.contains("# Nexora routing overrides"))
+    #expect(runtime.contains("    # Nexora routing overrides"))
     #expect(runtime.contains("'DOMAIN-SUFFIX,openai.com,Mutdot'"))
     #expect(runtime.contains("'DOMAIN-SUFFIX,example.cn,DIRECT'"))
     #expect(
@@ -357,7 +494,9 @@ import Testing
     )
     let runtime = try String(contentsOf: prepared.configURL, encoding: .utf8)
 
-    #expect(runtime.contains("rules:\n  # Clash Glass routing overrides"))
+    #expect(runtime.contains("rules:\n  # Nexora routing overrides"))
+    #expect(runtime.contains("unified-delay: true"))
+    #expect(runtime.contains("tcp-concurrent: true"))
 }
 
 @Test func routingVPNTargetResolverReadsInlineSelectorGroup() {

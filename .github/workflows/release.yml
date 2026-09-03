@@ -1,4 +1,4 @@
-name: Release
+name: Nexora Release
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           cat > dist/release-notes.md <<EOF
-          ## Clash Glass $version
+          ## Nexora $version
 
           - Native macOS client powered by Mihomo
           - Signed Sparkle update feed and DMG download
@@ -50,7 +50,7 @@ jobs:
           protected with an EdDSA signature.
           EOF
           gh release create "$GITHUB_REF_NAME" \
-            "dist/ClashGlass-$version.dmg" \
+            "dist/Nexora-$version.dmg" \
             "dist/appcast.xml" \
-            --title "Clash Glass $version" \
+            --title "Nexora $version" \
             --notes-file "dist/release-notes.md"

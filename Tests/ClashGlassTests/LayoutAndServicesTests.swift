@@ -9,10 +9,6 @@ import Testing
     #expect(metrics.contentWidth == 798)
 }
 
-@Test func pageScrollSurfacesClipContentToTheirViewport() {
-    #expect(PageScrollSurfaceMetrics.clipsToViewport)
-}
-
 @Test func dashboardRowUsesOneSharedHeightPartition() {
     let row = DashboardRowMetrics(
         totalHeight: DashboardRowMetrics.standardTotalHeight,
@@ -23,8 +19,6 @@ import Testing
     #expect(row.upperHeight == 84)
     #expect(row.lowerHeight == 84)
     #expect(row.upperHeight + row.gap + row.lowerHeight == row.totalHeight)
-    #expect(DashboardLowerRowLayoutMetrics.usesTopAnchoredCells)
-    #expect(DashboardLowerRowLayoutMetrics.columnCount == 3)
     #expect(OutboundModeLayoutMetrics.rowSpacing <= 4)
     #expect(
         OutboundModeLayoutMetrics.requiredContentHeight
@@ -45,10 +39,6 @@ import Testing
         DashboardTopRowLayoutMetrics.toggleCardHeight * 2 + row.gap
             == DashboardTopRowLayoutMetrics.networkSpeedHeight
     )
-}
-
-@Test func networkDetectionCardDoesNotShowAnInformationIcon() {
-    #expect(!DashboardCardContentPolicy.networkDetectionShowsInformationIcon)
 }
 
 @Test func dashboardLayoutScalesDownInsteadOfOverflowingSmallWindows() {
@@ -86,6 +76,52 @@ import Testing
     #expect(arguments.contains("--proxy\n\n"))
 }
 
+@Test func systemTunnelRouteDetectorRecognizesBroadUtunRoutes() {
+    let routedThroughTunnel = """
+    Routing tables
+
+    Internet:
+    Destination        Gateway            Flags               Netif Expire
+    default            192.168.1.1        UGScg                 en0
+    1                  198.18.0.1         UGSc                utun6
+    2/7                198.18.0.1         UGSc                utun6
+    128.0/1            198.18.0.1         UGSc                utun6
+    198.18.0.1         198.18.0.1         UH                  utun6
+    """
+    let normalWiFiRoute = """
+    Routing tables
+
+    Internet:
+    Destination        Gateway            Flags               Netif Expire
+    default            192.168.1.1        UGScg                 en0
+    192.168.1          link#14            UCS                   en0
+    """
+
+    #expect(SystemTunnelRouteDetector.isActive(in: routedThroughTunnel))
+    #expect(!SystemTunnelRouteDetector.isActive(in: normalWiFiRoute))
+}
+
+@Test func networkPortProbeParsesListeningProcessOwners() {
+    let output = """
+    COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+    ClashGlas 97948 max   21u  IPv4 0x123456789      0t0  TCP 127.0.0.1:7890 (LISTEN)
+    clash-ver  570 root   11u  IPv4 0x987654321      0t0  TCP 127.0.0.1:9090 (LISTEN)
+    """
+    let checks = NetworkPortProbe.parse(
+        output: output,
+        targets: [
+            NetworkPortTarget(label: "HTTP Proxy", port: 7890),
+            NetworkPortTarget(label: "Socks Proxy", port: 7891),
+            NetworkPortTarget(label: "Controller", port: 9090),
+        ]
+    )
+
+    #expect(checks.first(where: { $0.port == 7890 })?.ownerName == "ClashGlas")
+    #expect(checks.first(where: { $0.port == 7890 })?.isListening == true)
+    #expect(checks.first(where: { $0.port == 7891 })?.isListening == false)
+    #expect(checks.first(where: { $0.port == 9090 })?.ownerPID == 570)
+}
+
 @Test func dashboardLayoutUsesFullScaleWhenSpaceAllows() {
     let layout = DashboardLayoutMetrics(availableWidth: 1320, availableHeight: 820)
 
@@ -111,6 +147,41 @@ import Testing
     #expect(layout.railWidth == 74)
     #expect(layout.contentWidth == 1_206)
     #expect(layout.usesWideDashboard == true)
+}
+
+@Test func mainWindowLaunchSizePreventsTheKnownToolbarCollision() {
+    #expect(MainWindowLayoutMetrics.minimumWidth == 900)
+    #expect(MainWindowLayoutMetrics.minimumHeight == 600)
+    #expect(MainWindowLayoutMetrics.defaultWidth >= MainWindowLayoutMetrics.minimumWidth)
+    #expect(MainWindowLayoutMetrics.defaultHeight >= MainWindowLayoutMetrics.minimumHeight)
+    #expect(MainWindowLayoutMetrics.needsLaunchExpansion(width: 760, height: 647))
+    #expect(!MainWindowLayoutMetrics.needsLaunchExpansion(width: 900, height: 620))
+
+    let launchLayout = AppChromeLayoutMetrics(
+        availableWidth: MainWindowLayoutMetrics.defaultWidth,
+        availableHeight: MainWindowLayoutMetrics.defaultHeight
+    )
+    let featureToolbarWidth = launchLayout.stageWidth
+        - Double(PageSurfaceMetrics.horizontalInset * 2)
+    let diagnosticsToolbarWidth = Double(
+        FeatureToolbarLayoutMetrics.requiredHorizontalWidth(
+            leadingWidth: FeatureToolbarLayoutMetrics.customLeadingWidth,
+            actionCount: 2
+        )
+    )
+
+    #expect(featureToolbarWidth >= diagnosticsToolbarWidth)
+}
+
+@Test func denseFeatureControlsKeepResponsiveFallbacks() {
+    #expect(
+        FeatureToolbarLayoutMetrics.requiredHorizontalWidth(
+            leadingWidth: FeatureToolbarLayoutMetrics.customLeadingWidth,
+            actionCount: 2
+        ) == 662
+    )
+    #expect(ProfileCardActionLayoutMetrics.usesStackedFallback)
+    #expect(ProfileCardActionLayoutMetrics.minimumGap > 0)
 }
 
 @Test func systemProxyCommandsMatchMacOSNetworksetupShape() {

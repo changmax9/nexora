@@ -1,12 +1,10 @@
 import Foundation
-import SwiftUI
 
 public enum MihomoAPIEndpoint: Equatable, Sendable {
     case version
     case configs
     case proxies
     case connections
-    case logs
     case traffic
     case updateConfigs(mode: OutboundMode?, tunEnabled: Bool?)
     case changeProxy(group: String, proxy: String)
@@ -48,8 +46,6 @@ public struct MihomoAPIRequest: Sendable {
             return baseURL.appendingPathComponent("proxies")
         case .connections:
             return baseURL.appendingPathComponent("connections")
-        case .logs:
-            return baseURL.appendingPathComponent("logs")
         case .traffic:
             return baseURL.appendingPathComponent("traffic")
         case let .changeProxy(group, _):
@@ -103,7 +99,7 @@ public struct MihomoAPIRequest: Sendable {
 
     private func method(for endpoint: MihomoAPIEndpoint) -> String {
         switch endpoint {
-        case .version, .configs, .proxies, .connections, .logs, .traffic, .groupDelay, .delayTest:
+        case .version, .configs, .proxies, .connections, .traffic, .groupDelay, .delayTest:
             "GET"
         case .updateConfigs:
             "PATCH"
@@ -149,21 +145,6 @@ public struct MihomoAPIService: Sendable {
         return data
     }
 
-    public func firstLineData(for endpoint: MihomoAPIEndpoint, timeout: Duration = .seconds(1)) async throws -> Data {
-        try await withThrowingTaskGroup(of: Data.self) { group in
-            group.addTask {
-                try await readFirstLineData(for: endpoint)
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                return Data()
-            }
-            let data = try await group.next() ?? Data()
-            group.cancelAll()
-            return data
-        }
-    }
-
     public func lineDataStream(for endpoint: MihomoAPIEndpoint) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             let streamTask = Task {
@@ -188,45 +169,32 @@ public struct MihomoAPIService: Sendable {
         }
     }
 
-    public func medianDelay(
+    public func proxyDelay(
         proxy: String,
         url: String,
-        attempts: Int = 3,
-        timeout: Int = 5_000
+        timeout: Int = LatencyTestPlan.defaultTimeoutMilliseconds
     ) async -> Int? {
-        var measurements: [Int?] = []
-        for _ in 0..<max(attempts, 1) {
-            do {
-                let data = try await data(
-                    for: .delayTest(proxy: proxy, url: url, timeout: timeout)
-                )
-                measurements.append(try MihomoAPIDecoder.delay(from: data))
-            } catch {
-                measurements.append(nil)
-            }
+        do {
+            let data = try await data(
+                for: .delayTest(proxy: proxy, url: url, timeout: timeout)
+            )
+            return LatencyTestSettings.validMeasuredDelay(
+                try MihomoAPIDecoder.delay(from: data)
+            )
+        } catch {
+            return nil
         }
-        return LatencyMeasurement.median(measurements)
     }
 
     public func groupDelays(
         group: String,
         url: String,
-        timeout: Int = 5_000
+        timeout: Int = LatencyTestPlan.defaultTimeoutMilliseconds
     ) async throws -> [String: Int] {
         let data = try await data(
             for: .groupDelay(group: group, url: url, timeout: timeout)
         )
         return try MihomoAPIDecoder.groupDelays(from: data)
-    }
-
-    private func readFirstLineData(for endpoint: MihomoAPIEndpoint) async throws -> Data {
-        let request = try requestBuilder.urlRequest(for: endpoint)
-        let (bytes, response) = try await session.bytes(for: request)
-        try Self.validate(response: response, data: Data())
-        for try await line in bytes.lines {
-            return Data(line.utf8)
-        }
-        return Data()
     }
 
     private static func validate(response: URLResponse, data: Data) throws {
@@ -274,10 +242,16 @@ enum MihomoAPIDecoder {
                 let now = proxy.now ?? all.first
                 let nodes = all.map { nodeName in
                     let region = regionCode(from: nodeName)
+                    let latency = response.proxies[nodeName]?
+                        .history?
+                        .reversed()
+                        .compactMap(\.delay)
+                        .compactMap(LatencyTestSettings.validMeasuredDelay)
+                        .first
                     return ProxyNode(
                         name: nodeName,
                         region: region,
-                        latency: nil,
+                        latency: latency,
                         isSelected: nodeName == now,
                         isGroup: response.proxies[nodeName]?.all?.isEmpty == false
                     )
@@ -327,18 +301,6 @@ enum MihomoAPIDecoder {
         return TrafficSnapshot(up: response.up, down: response.down)
     }
 
-    static func logEntries(from data: Data, now: Date = Date()) throws -> [LogEntry] {
-        if let response = try? JSONDecoder().decode(LogResponse.self, from: data) {
-            return [LogEntry(level: response.type.capitalized, message: response.payload, time: timeText(now), tint: tint(for: response.type))]
-        }
-        let lines = String(data: data, encoding: .utf8)?
-            .split(whereSeparator: \.isNewline)
-            .map(String.init) ?? []
-        return lines.map { line in
-            LogEntry(level: "Info", message: line, time: timeText(now), tint: .blue)
-        }
-    }
-
     static func delay(from data: Data) throws -> Int {
         try JSONDecoder().decode(DelayResponse.self, from: data).delay
     }
@@ -374,20 +336,6 @@ enum MihomoAPIDecoder {
         return matches.first { upper.contains($0.0) }?.1 ?? "Proxy"
     }
 
-    private static func timeText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: date)
-    }
-
-    private static func tint(for level: String) -> Color {
-        switch level.lowercased() {
-        case "error": .red
-        case "warning", "warn": .orange
-        case "debug": .secondary
-        default: .blue
-        }
-    }
 }
 
 public struct TrafficSnapshot: Equatable, Sendable {
@@ -511,11 +459,6 @@ private struct ConnectionMetadata: Decodable {
 private struct TrafficResponse: Decodable {
     let up: Int
     let down: Int
-}
-
-private struct LogResponse: Decodable {
-    let type: String
-    let payload: String
 }
 
 private struct DelayResponse: Decodable {

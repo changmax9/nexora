@@ -56,7 +56,7 @@ public final class MihomoCoreService {
         }
 
         if let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            let appSupportURL = supportURL.appendingPathComponent("Clash Glass", isDirectory: true)
+            let appSupportURL = supportURL.appendingPathComponent("Nexora", isDirectory: true)
             candidates.append(appSupportURL.appendingPathComponent("mihomo").path)
             candidates.append(appSupportURL.appendingPathComponent("clash").path)
         }

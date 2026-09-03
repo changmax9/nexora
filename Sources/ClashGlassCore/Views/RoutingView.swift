@@ -54,49 +54,77 @@ struct RoutingView: View {
                     )
                 }
 
-                HStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "link")
-                            .foregroundStyle(palette.tertiaryText)
-                        TextField("https://example.com/path or example.com", text: $input)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .onSubmit(addRule)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 34)
-                    .background(
-                        palette.selectionTrack,
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .strokeBorder(palette.selectionStroke.opacity(0.48), lineWidth: 0.8)
-                    }
-
-                    PillSegment(
-                        values: RoutingPolicy.allCases,
-                        selection: $policy
-                    ) { $0 == .vpn ? "VPN" : store.text(.direct) }
-
-                    LiquidActionButton(
-                        title: isSaving ? store.text(.saving) : store.text(.addRule),
-                        symbol: isSaving ? "hourglass" : "plus"
-                    ) {
-                        addRule()
-                    }
-                    .disabled(
-                        isSaving
-                            || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || store.selectedManagedProfileID == nil
-                    )
-                }
+                routingEditorControls(palette: palette)
 
                 Text(store.text(.routingExplanation))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(palette.tertiaryText)
             }
         }
+    }
+
+    private func routingEditorControls(palette: GlassPalette) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                routingInput(palette: palette)
+                    .frame(minWidth: 240)
+                routingPolicyPicker
+                addRuleButton
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                routingInput(palette: palette)
+                HStack(spacing: 10) {
+                    routingPolicyPicker
+                    Spacer(minLength: 0)
+                    addRuleButton
+                }
+            }
+        }
+    }
+
+    private func routingInput(palette: GlassPalette) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "link")
+                .foregroundStyle(palette.tertiaryText)
+            TextField("https://example.com/path or example.com", text: $input)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .onSubmit(addRule)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .background(
+            palette.selectionTrack,
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(palette.selectionStroke.opacity(0.48), lineWidth: 0.8)
+        }
+    }
+
+    private var routingPolicyPicker: some View {
+        PillSegment(
+            values: RoutingPolicy.allCases,
+            selection: $policy
+        ) { $0 == .vpn ? "VPN" : store.text(.direct) }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var addRuleButton: some View {
+        LiquidActionButton(
+            title: isSaving ? store.text(.saving) : store.text(.addRule),
+            symbol: isSaving ? "hourglass" : "plus"
+        ) {
+            addRule()
+        }
+        .disabled(
+            isSaving
+                || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || store.selectedManagedProfileID == nil
+        )
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var rulesCard: some View {
@@ -156,7 +184,7 @@ private struct RoutingOverrideRow: View {
         HStack(spacing: 12) {
             Image(systemName: routingOverride.policy == .vpn ? "lock.shield.fill" : "arrow.right")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(routingOverride.policy == .vpn ? palette.rose : palette.green)
+                .foregroundStyle(routingOverride.policy == .vpn ? palette.rose : palette.secondaryText)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
                 Text(routingOverride.domain)
@@ -171,12 +199,12 @@ private struct RoutingOverrideRow: View {
             StatusChip(
                 text: routingOverride.policy == .vpn ? "VPN" : language.text(.direct),
                 symbol: routingOverride.policy == .vpn ? "network.badge.shield.half.filled" : nil,
-                tint: routingOverride.policy == .vpn ? palette.rose : palette.green
+                tint: routingOverride.policy == .vpn ? palette.rose : palette.secondaryText
             )
             LiquidIconButton(
                 title: language.text(.deleteRule),
                 symbol: "trash",
-                tint: .red.opacity(0.16),
+                tint: palette.secondaryText.opacity(0.14),
                 size: 28,
                 action: delete
             )

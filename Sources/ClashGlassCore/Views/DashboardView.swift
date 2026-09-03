@@ -184,6 +184,7 @@ private struct NetworkSpeedCard: View {
 private struct NetworkCurve: View {
     let samples: [Double]
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
@@ -222,7 +223,7 @@ private struct NetworkCurve: View {
             context.stroke(line, with: .color(palette.brown.opacity(colorScheme == .dark ? 0.92 : 0.78)), lineWidth: 2.2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.linear(duration: 0.45), value: samples)
+        .animation(reduceMotion ? nil : .linear(duration: 0.45), value: samples)
     }
 }
 
@@ -308,7 +309,7 @@ private struct ModeRow: View {
     let selectedMode: OutboundMode
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -339,8 +340,14 @@ private struct ModeRow: View {
                     isPressed: false,
                     reduceMotion: reduceMotion
                 ))
-                .animation(.spring(response: 0.24, dampingFraction: 0.68), value: isHovering)
-                .animation(.spring(response: 0.24, dampingFraction: 0.78), value: isSelected)
+                .animation(
+                    reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.68),
+                    value: isHovering
+                )
+                .animation(
+                    reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.78),
+                    value: isSelected
+                )
 
                 Text(title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))

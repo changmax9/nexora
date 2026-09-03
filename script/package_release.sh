@@ -10,8 +10,8 @@ VERSION="${1#v}"
 TAG="v$VERSION"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-APP_BUNDLE="$DIST_DIR/ClashGlass.app"
-DMG_NAME="ClashGlass-$VERSION.dmg"
+APP_BUNDLE="$DIST_DIR/Nexora.app"
+DMG_NAME="Nexora-$VERSION.dmg"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 APPCAST_PATH="$DIST_DIR/appcast.xml"
 SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
@@ -24,6 +24,7 @@ fi
 
 APP_VERSION="$VERSION" \
 APP_BUILD="$BUILD_NUMBER" \
+SPARKLE_ENABLE_AUTOMATIC_CHECKS=true \
 BUILD_CONFIGURATION=release \
 "$ROOT_DIR/script/build_and_run.sh" --stage
 
@@ -40,7 +41,7 @@ done
 
 rm -f "$DMG_PATH" "$APPCAST_PATH"
 /usr/bin/hdiutil create \
-  -volname "Clash Glass" \
+  -volname "Nexora" \
   -srcfolder "$APP_BUNDLE" \
   -ov \
   -format UDZO \
@@ -75,16 +76,16 @@ cat >"$APPCAST_PATH" <<XML
 <rss version="2.0"
     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Clash Glass Updates</title>
+    <title>Nexora Updates</title>
     <item>
-      <title>Clash Glass $VERSION</title>
+      <title>Nexora $VERSION</title>
       <pubDate>$(LC_ALL=C date -R)</pubDate>
       <description><![CDATA[
-        <h2>Clash Glass $VERSION</h2>
+        <h2>Nexora $VERSION</h2>
         <ul>$RELEASE_ITEMS</ul>
       ]]></description>
       <enclosure
-        url="https://github.com/changmax9/clash-glass/releases/download/$TAG/$DMG_NAME"
+        url="https://github.com/changmax9/nexora/releases/download/$TAG/$DMG_NAME"
         sparkle:version="$BUILD_NUMBER"
         sparkle:shortVersionString="$VERSION"
         length="$FILE_LENGTH"

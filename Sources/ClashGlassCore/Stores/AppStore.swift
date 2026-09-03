@@ -12,10 +12,12 @@ public final class AppStore {
     private let profileRepository: ManagedProfileRepository
     private let runtimeConfigurationPreparer: RuntimeConfigurationPreparer
     private let networkIdentityService: NetworkIdentityService
+    private let networkPortProbe: @Sendable ([NetworkPortTarget]) async -> [NetworkPortCheck]
+    private let networkDNSProbe: @Sendable ([NetworkDNSTarget]) async -> [NetworkDNSCheck]
+    private let networkEndpointProbe: @Sendable ([NetworkEndpointTarget]) async -> [NetworkEndpointCheck]
     private let proxySelectionRepository: ProxySelectionRepository
     private let routingOverrideRepository: RoutingOverrideRepository
     private var previousSystemProxySnapshot: SystemProxySnapshot?
-    private var runStartedAt: Date?
     private var runtimeTickCount = 0
     private var trafficStreamTask: Task<Void, Never>?
     private var latestUploadBytesPerSecond = 0
@@ -36,6 +38,11 @@ public final class AppStore {
             userDefaults.set(appearanceMode.rawValue, forKey: "appearanceMode")
         }
     }
+    public var accent: NexoraAccent = .terracotta {
+        didSet {
+            userDefaults.set(accent.rawValue, forKey: "accent")
+        }
+    }
     public var language: AppLanguage = .system {
         didSet {
             userDefaults.set(language.rawValue, forKey: "language")
@@ -44,6 +51,23 @@ public final class AppStore {
     public var reduceMotion = false {
         didSet {
             userDefaults.set(reduceMotion, forKey: "reduceMotion")
+        }
+    }
+    private var latencyTestURLStorage = LatencyTestPlan.defaultTestURL
+    public var latencyTestURL: String {
+        get { latencyTestURLStorage }
+        set {
+            latencyTestURLStorage = LatencyTestSettings.normalizedTestURL(newValue)
+            userDefaults.set(latencyTestURLStorage, forKey: "latencyTestURL")
+        }
+    }
+    private var latencyTestTimeoutMillisecondsStorage = LatencyTestPlan.defaultTimeoutMilliseconds
+    public var latencyTestTimeoutMilliseconds: Int {
+        get { latencyTestTimeoutMillisecondsStorage }
+        set {
+            latencyTestTimeoutMillisecondsStorage = LatencyTestSettings
+                .normalizedTimeoutMilliseconds(newValue)
+            userDefaults.set(latencyTestTimeoutMillisecondsStorage, forKey: "latencyTestTimeoutMilliseconds")
         }
     }
     public var httpPort = 7890
@@ -57,10 +81,14 @@ public final class AppStore {
     var routingOverrides: [RoutingOverride] = []
     public private(set) var controllerURL = URL(string: "http://127.0.0.1:9090")!
     public private(set) var controllerSecret: String?
-    public var runSeconds = 0
     public var externalIP = "Detecting..."
     public var networkCountryCode = ""
     public var networkCountryName = ""
+    public var networkEgressKind: NetworkEgressKind = .detecting
+    public private(set) var networkDiagnosticReport = NetworkDiagnosticReport.placeholder
+    public private(set) var networkPortChecks: [NetworkPortCheck] = []
+    public private(set) var networkDNSChecks: [NetworkDNSCheck] = []
+    public private(set) var networkEndpointChecks: [NetworkEndpointCheck] = []
     public var intranetIP = "Detecting..."
     public var uploadSpeedText = "0B/s"
     public var downloadSpeedText = "0B/s"
@@ -72,12 +100,10 @@ public final class AppStore {
     public private(set) var profileValidationStates: [ManagedProfile.ID: ProfileValidationState] = [:]
     var isLatencyTesting = false
     var latencyTestProgress = LatencyTestProgress(completed: 0, total: 0)
-    public var dashboardWidgets = DashboardWidgetKind.defaultOrder
     public var speedSamples: [Double] = Array(repeating: 0, count: 28)
 
     var proxyGroups: [ProxyGroup] = []
     var connections: [ConnectionEntry] = []
-    var logs: [LogEntry] = []
 
     public init(
         coreService: MihomoCoreService = MihomoCoreService(),
@@ -88,6 +114,9 @@ public final class AppStore {
         profileRepository: ManagedProfileRepository = ManagedProfileRepository(),
         runtimeConfigurationPreparer: RuntimeConfigurationPreparer = RuntimeConfigurationPreparer(),
         networkIdentityService: NetworkIdentityService = NetworkIdentityService(),
+        networkPortProbe: @escaping @Sendable ([NetworkPortTarget]) async -> [NetworkPortCheck] = NetworkPortProbe.check,
+        networkDNSProbe: @escaping @Sendable ([NetworkDNSTarget]) async -> [NetworkDNSCheck] = NetworkDNSProbe.resolve,
+        networkEndpointProbe: @escaping @Sendable ([NetworkEndpointTarget]) async -> [NetworkEndpointCheck] = NetworkEndpointProbe.check,
         proxySelectionRepository: ProxySelectionRepository? = nil,
         userDefaults: UserDefaults = .standard
     ) {
@@ -98,16 +127,30 @@ public final class AppStore {
         self.profileRepository = profileRepository
         self.runtimeConfigurationPreparer = runtimeConfigurationPreparer
         self.networkIdentityService = networkIdentityService
+        self.networkPortProbe = networkPortProbe
+        self.networkDNSProbe = networkDNSProbe
+        self.networkEndpointProbe = networkEndpointProbe
         self.proxySelectionRepository = proxySelectionRepository
             ?? ProxySelectionRepository(rootURL: profileRepository.rootURL)
         routingOverrideRepository = RoutingOverrideRepository(rootURL: profileRepository.rootURL)
         appearanceMode = AppAppearance(
             rawValue: userDefaults.string(forKey: "appearanceMode") ?? ""
         ) ?? .system
+        accent = NexoraAccent(
+            rawValue: userDefaults.string(forKey: "accent") ?? ""
+        ) ?? .terracotta
         language = AppLanguage(
             rawValue: userDefaults.string(forKey: "language") ?? ""
         ) ?? .system
         reduceMotion = userDefaults.bool(forKey: "reduceMotion")
+        latencyTestURLStorage = LatencyTestSettings.normalizedTestURL(
+            userDefaults.string(forKey: "latencyTestURL") ?? LatencyTestPlan.defaultTestURL
+        )
+        if userDefaults.object(forKey: "latencyTestTimeoutMilliseconds") != nil {
+            latencyTestTimeoutMillisecondsStorage = LatencyTestSettings.normalizedTimeoutMilliseconds(
+                userDefaults.integer(forKey: "latencyTestTimeoutMilliseconds")
+            )
+        }
         controllerURL = apiService.requestBuilder.baseURL
         controllerSecret = apiService.requestBuilder.secret
         configPath = profileRepository.runtimeConfigURL.path
@@ -133,15 +176,41 @@ public final class AppStore {
         selectedManagedProfile?.name ?? selectedProfile
     }
 
+    var menuBarHeaderTitle: String {
+        menuBarSelectedNodeName ?? menuBarProfileTitle
+    }
+
+    var latencyTestSettings: LatencyTestSettings {
+        LatencyTestSettings(
+            testURL: latencyTestURL,
+            timeoutMilliseconds: latencyTestTimeoutMilliseconds
+        )
+    }
+
     var menuBarProxyNodes: [ProxyNode] {
-        proxyGroups
-            .first(where: { $0.name == MenuBarQuickAccessPolicy.selectorName })?
-            .nodes
-            .filter { !$0.isGroup } ?? []
+        guard let selector = proxyGroups.first(where: {
+            $0.name == MenuBarQuickAccessPolicy.selectorName
+        }) else {
+            return []
+        }
+        let selectedNodeName = ProxySelectionResolver.selectedLeafNodeName(
+            selectedGroupName: selector.name,
+            groups: proxyGroups
+        )
+        return selector.nodes
+            .filter { !$0.isGroup }
+            .map { node in
+                var displayedNode = node
+                displayedNode.isSelected = node.name == selectedNodeName
+                return displayedNode
+            }
     }
 
     var menuBarSelectedNodeName: String? {
-        menuBarProxyNodes.first(where: \.isSelected)?.name
+        ProxySelectionResolver.selectedLeafNodeName(
+            selectedGroupName: MenuBarQuickAccessPolicy.selectorName,
+            groups: proxyGroups
+        )
     }
 
     public var managedProfilesFolderURL: URL {
@@ -253,10 +322,6 @@ public final class AppStore {
         lastErrorMessage = firstFailure
     }
 
-    public func clearLogs() {
-        logs.removeAll()
-    }
-
     func addRoutingOverride(input: String, policy: RoutingPolicy) async {
         guard let profileID = selectedManagedProfileID else {
             lastErrorMessage = "Select a managed profile before adding routing rules."
@@ -301,19 +366,6 @@ public final class AppStore {
         }
     }
 
-    public var exportedLogs: String {
-        logs.reversed().map { "[\($0.time)] \($0.level): \($0.message)" }
-            .joined(separator: "\n")
-    }
-
-    public func toggleCore() {
-        isCoreRunning.toggle()
-    }
-
-    public func toggleStarted() {
-        isStarted.toggle()
-    }
-
     public func toggleRuntime(configPath: String) async {
         if isStarted {
             await stopRuntime(userInitiated: true)
@@ -331,18 +383,15 @@ public final class AppStore {
 
         isStarted = true
         isCoreRunning = true
-        runStartedAt = Date()
         runtimeTickCount = 0
         latestUploadBytesPerSecond = 0
         latestDownloadBytesPerSecond = 0
-        runSeconds = 0
         startTrafficStream()
         await refreshRuntimeConfiguration()
         await refreshProxies()
         await refreshConnections()
         await applySystemProxy(enabled: true, service: networkService)
         await refreshNetworkIdentity()
-        await refreshLogs()
     }
 
     public func shutdownRuntime() async {
@@ -400,10 +449,6 @@ public final class AppStore {
         isSystemProxyEnabled = false
     }
 
-    public func toggleSystemProxy() {
-        isSystemProxyEnabled.toggle()
-    }
-
     public func toggleSystemProxy(service: String = "Wi-Fi") async {
         guard isStarted else {
             isSystemProxyEnabled.toggle()
@@ -421,14 +466,6 @@ public final class AppStore {
             return .enable(service: service, host: proxyHost, httpPort: httpPort, socksPort: socksPort)
         }
         return .disable(service: service)
-    }
-
-    public func toggleTun() {
-        isTunEnabled.toggle()
-    }
-
-    public func selectOutboundMode(_ mode: OutboundMode) {
-        selectedMode = mode
     }
 
     public func setOutboundMode(_ mode: OutboundMode) async {
@@ -531,14 +568,15 @@ public final class AppStore {
         }
     }
 
-    public func delayTestAll(timeout: Int = 5_000) async {
+    public func delayTestAll() async {
         guard !isLatencyTesting else {
             return
         }
         guard await ensureControllerAvailable(configPath: configPath) else {
             return
         }
-        let plan = LatencyTestPlanner.plan(groups: proxyGroups)
+        let settings = latencyTestSettings
+        let plan = LatencyTestPlanner.plan(groups: proxyGroups, settings: settings)
         let service = apiService
         guard !plan.nodeNames.isEmpty else {
             lastErrorMessage = "No concrete proxy nodes are available for latency testing."
@@ -546,12 +584,21 @@ public final class AppStore {
         }
         isLatencyTesting = true
         latencyTestProgress = LatencyTestProgress(completed: 0, total: plan.nodeNames.count)
+        for groupIndex in proxyGroups.indices {
+            for nodeIndex in proxyGroups[groupIndex].nodes.indices
+            where plan.nodeNames.contains(proxyGroups[groupIndex].nodes[nodeIndex].name) {
+                proxyGroups[groupIndex].nodes[nodeIndex].latency = nil
+            }
+        }
         defer {
             isLatencyTesting = false
         }
 
-        var successfulMeasurements = 0
+        var successfulNodeNames = Set<String>()
         var completedNodeNames = Set<String>()
+        var fallbackTestsByName = Dictionary(
+            uniqueKeysWithValues: plan.fallbackTests.map { ($0.proxyName, $0) }
+        )
         func publish(
             delays: [String: Int],
             completed names: Set<String>
@@ -561,7 +608,7 @@ public final class AppStore {
                 completed: completedNodeNames.count,
                 total: plan.nodeNames.count
             )
-            successfulMeasurements += delays.count
+            successfulNodeNames.formUnion(delays.keys)
             for (nodeName, latency) in delays {
                 for groupIndex in proxyGroups.indices {
                     for nodeIndex in proxyGroups[groupIndex].nodes.indices
@@ -588,35 +635,45 @@ public final class AppStore {
                         let delays = (try? await service.groupDelays(
                             group: test.groupName,
                             url: test.url,
-                            timeout: timeout
+                            timeout: settings.timeoutMilliseconds
                         )) ?? [:]
                         return (test, delays)
                     }
                 }
                 for await (test, delays) in taskGroup {
-                    publish(delays: delays, completed: test.nodeNames)
+                    let validDelays = delays.filter { nodeName, delay in
+                        test.nodeNames.contains(nodeName)
+                            && LatencyTestSettings.validMeasuredDelay(delay) != nil
+                    }
+                    let measuredNodeNames = Set(validDelays.keys)
+                    publish(delays: validDelays, completed: measuredNodeNames)
+                    for fallback in test.fallbackTests(excluding: measuredNodeNames) {
+                        fallbackTestsByName[fallback.proxyName] = fallback
+                    }
                 }
             }
         }
 
+        let fallbackTests = fallbackTestsByName.values
+            .filter { !successfulNodeNames.contains($0.proxyName) }
+            .sorted { $0.proxyName < $1.proxyName }
         for batchStart in stride(
             from: 0,
-            to: plan.fallbackTests.count,
+            to: fallbackTests.count,
             by: LatencyTestPlan.maximumConcurrentFallbackTests
         ) {
             let batchEnd = min(
                 batchStart + LatencyTestPlan.maximumConcurrentFallbackTests,
-                plan.fallbackTests.count
+                fallbackTests.count
             )
-            let batch = plan.fallbackTests[batchStart..<batchEnd]
+            let batch = fallbackTests[batchStart..<batchEnd]
             await withTaskGroup(of: (String, Int?).self) { taskGroup in
                 for test in batch {
                     taskGroup.addTask {
-                        let latency = await service.medianDelay(
+                        let latency = await service.proxyDelay(
                             proxy: test.proxyName,
                             url: test.url,
-                            attempts: LatencyTestPlan.attemptsPerProxy,
-                            timeout: timeout
+                            timeout: settings.timeoutMilliseconds
                         )
                         return (test.proxyName, latency)
                     }
@@ -629,7 +686,7 @@ public final class AppStore {
                 }
             }
         }
-        lastErrorMessage = successfulMeasurements > 0
+        lastErrorMessage = !successfulNodeNames.isEmpty
             ? nil
             : "No proxy returned a successful delay measurement."
     }
@@ -656,12 +713,6 @@ public final class AppStore {
             lastErrorMessage = error.localizedDescription
         }
         await refreshConnections()
-    }
-
-    public func refreshRuntimeData() async {
-        await refreshProxies()
-        await refreshConnections()
-        await refreshLogs()
     }
 
     public func refreshRuntimeConfiguration() async {
@@ -693,9 +744,6 @@ public final class AppStore {
             await restorePreviousSystemProxy()
             return
         }
-        if let runStartedAt {
-            runSeconds = max(0, Int(Date().timeIntervalSince(runStartedAt)))
-        }
         runtimeTickCount += 1
         advanceSpeedGraph()
         if runtimeTickCount.isMultiple(of: 4) {
@@ -703,7 +751,6 @@ public final class AppStore {
         }
         if runtimeTickCount.isMultiple(of: 10) {
             await refreshRuntimeConfiguration()
-            await refreshLogs()
         }
         if runtimeTickCount.isMultiple(of: 20) {
             await refreshNetworkIdentity()
@@ -723,12 +770,12 @@ public final class AppStore {
         }
     }
 
-    public func refreshProxiesAndLatency(timeout: Int = 5_000) async {
+    public func refreshProxiesAndLatency() async {
         await refreshProxies()
         guard lastErrorMessage == nil, !proxyGroups.isEmpty else {
             return
         }
-        await delayTestAll(timeout: timeout)
+        await delayTestAll()
     }
 
     public func refreshConnections() async {
@@ -738,29 +785,6 @@ public final class AppStore {
         do {
             let data = try await apiService.data(for: .connections)
             applyConnectionsResponse(data)
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    public func refreshTraffic() async {
-        guard isStarted else {
-            return
-        }
-        advanceSpeedGraph()
-    }
-
-    public func refreshLogs() async {
-        guard isStarted else {
-            return
-        }
-        do {
-            let data = try await apiService.firstLineData(for: .logs, timeout: .milliseconds(400))
-            guard !data.isEmpty else {
-                return
-            }
-            applyLogResponse(data)
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -782,6 +806,7 @@ public final class AppStore {
                 for nodeIndex in groups[groupIndex].nodes.indices {
                     let nodeName = groups[groupIndex].nodes[nodeIndex].name
                     groups[groupIndex].nodes[nodeIndex].latency = measuredLatencies[nodeName]
+                        ?? groups[groupIndex].nodes[nodeIndex].latency
                 }
             }
             if !groups.isEmpty {
@@ -833,16 +858,6 @@ public final class AppStore {
         }
     }
 
-    public func applyLogResponse(_ data: Data) {
-        do {
-            logs = try MihomoAPIDecoder.logEntries(from: data) + logs
-            logs = Array(logs.prefix(200))
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
-
     public func applySystemProxy(enabled: Bool, service: String = "Wi-Fi") async {
         do {
             if enabled, previousSystemProxySnapshot == nil {
@@ -868,11 +883,29 @@ public final class AppStore {
         if let localIP = networkIdentityService.localIPv4Address() {
             intranetIP = localIP
         }
+        let shouldFetchViaProxy = isStarted
+        externalIP = "Detecting..."
+        networkCountryCode = ""
+        networkCountryName = ""
+        networkEgressKind = .detecting
+        let directEgressKind: NetworkEgressKind = if await networkIdentityService.hasActiveSystemTunnel() {
+            .systemTunnel
+        } else {
+            .direct
+        }
         do {
-            let identity = if isStarted {
-                try await networkIdentityService.fetchViaProxy(host: proxyHost, port: httpPort)
+            let identity: NetworkIdentity
+            if shouldFetchViaProxy {
+                do {
+                    networkEgressKind = .proxy
+                    identity = try await networkIdentityService.fetchViaProxy(host: proxyHost, port: httpPort)
+                } catch {
+                    networkEgressKind = directEgressKind
+                    identity = try await networkIdentityService.fetchDirect()
+                }
             } else {
-                try await networkIdentityService.fetchDirect()
+                networkEgressKind = directEgressKind
+                identity = try await networkIdentityService.fetchDirect()
             }
             guard NetworkAddressPolicy.isIPv4(identity.ip) else {
                 throw NetworkIdentityError.invalidResponse(
@@ -883,17 +916,47 @@ public final class AppStore {
             networkCountryCode = identity.countryCode
             networkCountryName = identity.countryName
         } catch {
-            if externalIP == "Detecting..." {
-                externalIP = "Unavailable"
-            }
+            externalIP = "Unavailable"
+            networkCountryCode = ""
+            networkCountryName = ""
+            networkEgressKind = .unavailable
         }
     }
 
-    public var runTimeText: String {
-        let hours = runSeconds / 3600
-        let minutes = (runSeconds % 3600) / 60
-        let seconds = runSeconds % 60
-        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    public func runNetworkDiagnosis() async {
+        await refreshNetworkIdentity()
+        let activeSystemTunnel = await networkIdentityService.hasActiveSystemTunnel()
+        let targets = NetworkPortTarget.standard(
+            httpPort: httpPort,
+            socksPort: socksPort,
+            controllerPort: controllerURL.port ?? 9090
+        )
+        async let portChecks = networkPortProbe(targets)
+        async let dnsChecks = networkDNSProbe(NetworkDNSTarget.standard)
+        async let endpointChecks = networkEndpointProbe(NetworkEndpointTarget.standard)
+        networkPortChecks = await portChecks
+        networkDNSChecks = await dnsChecks
+        networkEndpointChecks = await endpointChecks
+        networkDiagnosticReport = NetworkDiagnosticEngine.report(
+            snapshot: NetworkDiagnosticSnapshot(
+                isStarted: isStarted,
+                isSystemProxyEnabled: isSystemProxyEnabled,
+                isTunEnabled: isTunEnabled,
+                activeSystemTunnel: activeSystemTunnel,
+                egressKind: networkEgressKind,
+                externalIP: externalIP,
+                countryCode: networkCountryCode,
+                countryName: networkCountryName,
+                intranetIP: intranetIP,
+                httpPort: httpPort,
+                socksPort: socksPort,
+                selectedMode: selectedMode,
+                selectedProfile: menuBarProfileTitle,
+                portChecks: networkPortChecks,
+                dnsChecks: networkDNSChecks,
+                endpointChecks: networkEndpointChecks
+            )
+        )
     }
 
     static func speedText(_ bytesPerSecond: Int) -> String {
@@ -1187,7 +1250,6 @@ public final class AppStore {
         isStarted = false
         isCoreRunning = false
         isSystemProxyEnabled = false
-        runStartedAt = nil
         runtimeTickCount = 0
         latestUploadBytesPerSecond = 0
         latestDownloadBytesPerSecond = 0
@@ -1203,7 +1265,6 @@ public final class AppStore {
         coreStatus = coreService.status
         isStarted = false
         isCoreRunning = false
-        runStartedAt = nil
         runtimeTickCount = 0
     }
 

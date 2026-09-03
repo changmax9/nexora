@@ -9,12 +9,27 @@ enum PageSurfaceMetrics {
     }
 }
 
-enum PageScrollSurfaceMetrics {
-    static let clipsToViewport = true
+enum FeatureToolbarLayoutMetrics {
+    static let searchWidth: CGFloat = 280
+    static let customLeadingWidth: CGFloat = 560
+    static let actionSpacing: CGFloat = 10
+    static let minimumGap: CGFloat = 12
+    static let compactRowSpacing: CGFloat = 10
+
+    static func actionsWidth(count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return CGFloat(count) * CGFloat(ToolbarControlMetrics.hitTarget)
+            + CGFloat(count - 1) * actionSpacing
+    }
+
+    static func requiredHorizontalWidth(leadingWidth: CGFloat, actionCount: Int) -> CGFloat {
+        leadingWidth + (actionCount > 0 ? minimumGap : 0) + actionsWidth(count: actionCount)
+    }
 }
 
 struct FeaturePage<Content: View>: View {
     var searchText: Binding<String>? = nil
+    var toolbarLeading: AnyView? = nil
     let placeholder: String
     let actions: [FeatureAction]
     @ViewBuilder let content: Content
@@ -22,39 +37,92 @@ struct FeaturePage<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                if let searchText {
-                    SearchCapsule(text: searchText, placeholder: placeholder)
-                        .frame(width: 280)
-                }
-
-                Spacer(minLength: 12)
-
-                ForEach(actions) { action in
-                    LiquidIconButton(
-                        title: action.title,
-                        symbol: action.symbol,
-                        size: 32,
-                        action: action.action
-                    )
-                    .disabled(action.isDisabled)
-                    .opacity(action.isDisabled ? 0.55 : 1)
-                }
-            }
+            featureToolbar
             .frame(maxWidth: .infinity)
             .padding(.top, 6)
             .padding(.horizontal, PageSurfaceMetrics.horizontalInset)
 
-            ScrollView(.vertical) {
-                content
-                    .padding(.top, PageSurfaceMetrics.topInset)
-                    .padding(.horizontal, PageSurfaceMetrics.horizontalInset)
-                    .padding(.bottom, 96)
+            GeometryReader { proxy in
+                ScrollView(.vertical) {
+                    content
+                        .frame(
+                            width: PageSurfaceMetrics.contentWidth(availableWidth: proxy.size.width),
+                            alignment: .topLeading
+                        )
+                        .padding(.top, PageSurfaceMetrics.topInset)
+                        .padding(.horizontal, PageSurfaceMetrics.horizontalInset)
+                        .padding(.bottom, 96)
+                }
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .scrollIndicators(.hidden)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
-            .scrollIndicators(.hidden)
         }
+    }
+
+    @ViewBuilder
+    private var featureToolbar: some View {
+        if toolbarLeading != nil || searchText != nil {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    preferredLeadingControl
+                    Spacer(minLength: FeatureToolbarLayoutMetrics.minimumGap)
+                    actionButtons
+                }
+
+                VStack(alignment: .leading, spacing: FeatureToolbarLayoutMetrics.compactRowSpacing) {
+                    flexibleLeadingControl
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        actionButtons
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        } else {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                actionButtons
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var preferredLeadingControl: some View {
+        if let toolbarLeading {
+            toolbarLeading
+                .frame(width: FeatureToolbarLayoutMetrics.customLeadingWidth, alignment: .leading)
+        } else if let searchText {
+            SearchCapsule(text: searchText, placeholder: placeholder)
+                .frame(width: FeatureToolbarLayoutMetrics.searchWidth)
+        }
+    }
+
+    @ViewBuilder
+    private var flexibleLeadingControl: some View {
+        if let toolbarLeading {
+            toolbarLeading
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let searchText {
+            SearchCapsule(text: searchText, placeholder: placeholder)
+                .frame(maxWidth: FeatureToolbarLayoutMetrics.searchWidth, alignment: .leading)
+        }
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: FeatureToolbarLayoutMetrics.actionSpacing) {
+            ForEach(actions) { action in
+                LiquidIconButton(
+                    title: action.title,
+                    symbol: action.symbol,
+                    size: 32,
+                    action: action.action
+                )
+                .disabled(action.isDisabled)
+                .opacity(action.isDisabled ? 0.55 : 1)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -106,6 +174,7 @@ struct PillSegment<Value: Hashable & Identifiable>: View where Value.ID == Value
     @Binding var selection: Value
     let title: (Value) -> String
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
     @State private var hoveredValue: Value?
 
@@ -114,7 +183,7 @@ struct PillSegment<Value: Hashable & Identifiable>: View where Value.ID == Value
         HStack(spacing: 4) {
             ForEach(values) { value in
                 Button {
-                    withAnimation(.spring(response: 0.26, dampingFraction: 0.78)) {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.78)) {
                         selection = value
                     }
                 } label: {
@@ -136,7 +205,7 @@ struct PillSegment<Value: Hashable & Identifiable>: View where Value.ID == Value
                 .buttonStyle(.plain)
                 .scaleEffect(hoveredValue == value ? 1.025 : 1)
                 .onHover { hovering in
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.76)) {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.76)) {
                         hoveredValue = hovering ? value : nil
                     }
                 }

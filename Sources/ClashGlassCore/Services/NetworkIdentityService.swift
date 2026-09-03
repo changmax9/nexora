@@ -36,6 +36,49 @@ public enum NetworkAddressPolicy {
     }
 }
 
+public enum SystemTunnelRouteDetector {
+    public static func isActive() -> Bool {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
+        process.arguments = ["-rn", "-f", "inet"]
+        process.standardOutput = output
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let routingTable = String(data: data, encoding: .utf8) else {
+            return false
+        }
+        return isActive(in: routingTable)
+    }
+
+    public static func isActive(in routingTable: String) -> Bool {
+        routingTable.split(whereSeparator: \.isNewline).contains { line in
+            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard fields.count >= 4,
+                  let networkInterface = fields.last,
+                  networkInterface.hasPrefix("utun") else {
+                return false
+            }
+
+            let destination = String(fields[0])
+            let gateway = String(fields[1])
+            guard gateway.hasPrefix("198.18."),
+                  !destination.hasPrefix("198.18.") else {
+                return false
+            }
+            return true
+        }
+    }
+}
+
 public enum NetworkIdentityDecoder {
     public static func decode(_ data: Data) throws -> NetworkIdentity {
         let response = try JSONDecoder().decode(NetworkIdentityResponse.self, from: data)
@@ -101,15 +144,18 @@ public struct NetworkIdentityService: Sendable {
     public let endpoint: URL
     public let ipv4Endpoint: URL
     public let directFetcher: DirectNetworkIdentityFetcher
+    public let systemTunnelDetector: @Sendable () -> Bool
 
     public init(
         endpoint: URL = URL(string: "https://ipwho.is/")!,
         ipv4Endpoint: URL = URL(string: "https://api4.ipify.org?format=json")!,
-        directFetcher: DirectNetworkIdentityFetcher = DirectNetworkIdentityFetcher()
+        directFetcher: DirectNetworkIdentityFetcher = DirectNetworkIdentityFetcher(),
+        systemTunnelDetector: @escaping @Sendable () -> Bool = SystemTunnelRouteDetector.isActive
     ) {
         self.endpoint = endpoint
         self.ipv4Endpoint = ipv4Endpoint
         self.directFetcher = directFetcher
+        self.systemTunnelDetector = systemTunnelDetector
     }
 
     public func fetchDirect() async throws -> NetworkIdentity {
@@ -126,6 +172,13 @@ public struct NetworkIdentityService: Sendable {
         let identityURL = endpoint.appendingPathComponent(ipv4)
         let identityData = try await fetchData(from: identityURL, proxy: proxy)
         return try NetworkIdentityDecoder.decode(identityData)
+    }
+
+    public func hasActiveSystemTunnel() async -> Bool {
+        let detector = systemTunnelDetector
+        return await Task.detached(priority: .utility) {
+            detector()
+        }.value
     }
 
     public func localIPv4Address() -> String? {

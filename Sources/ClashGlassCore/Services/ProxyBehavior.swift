@@ -1,6 +1,27 @@
 import Foundation
 
 enum ProxySelectionResolver {
+    static func selectedLeafNodeName(
+        selectedGroupName: String,
+        groups: [ProxyGroup]
+    ) -> String? {
+        var currentGroupName = selectedGroupName
+        var visitedGroupNames = Set<String>()
+
+        while visitedGroupNames.insert(currentGroupName).inserted {
+            guard let group = groups.first(where: { $0.name == currentGroupName }),
+                  let selectedNode = group.nodes.first(where: \.isSelected) else {
+                return nil
+            }
+            guard selectedNode.isGroup else {
+                return selectedNode.name
+            }
+            currentGroupName = selectedNode.name
+        }
+
+        return nil
+    }
+
     static func targetGroups(
         selectedGroupName: String,
         nodeName: String,
@@ -68,46 +89,87 @@ enum ProxySelectionResolver {
     }
 }
 
-enum LatencyMeasurement {
-    static func median(_ values: [Int?]) -> Int? {
-        let successful = values.compactMap { $0 }.sorted()
-        guard !successful.isEmpty else {
-            return nil
-        }
-        let middle = successful.count / 2
-        if successful.count.isMultiple(of: 2) {
-            return (successful[middle - 1] + successful[middle]) / 2
-        }
-        return successful[middle]
-    }
-}
-
 enum LatencyTestTargetResolver {
-    static func testURL(nodeName: String, groups: [ProxyGroup]) -> String {
+    static func testURL(
+        nodeName: String,
+        groups: [ProxyGroup],
+        settings: LatencyTestSettings = LatencyTestSettings()
+    ) -> String {
         groups.first(where: { group in
             group.kind.isAutomatic
-                && group.testURL?.isEmpty == false
+                && group.testURL.flatMap(LatencyTestSettings.validTestURL) != nil
                 && group.nodes.contains(where: { $0.name == nodeName })
-        })?.testURL
+        })?.testURL.flatMap(LatencyTestSettings.validTestURL)
             ?? groups.first(where: { group in
-                group.testURL?.isEmpty == false
+                group.testURL.flatMap(LatencyTestSettings.validTestURL) != nil
                     && group.nodes.contains(where: { $0.name == nodeName })
-            })?.testURL
-            ?? LatencyTestPlan.defaultTestURL
+            })?.testURL.flatMap(LatencyTestSettings.validTestURL)
+            ?? settings.testURL
     }
 }
 
-enum LatencyTestPlan {
-    static let maximumConcurrentGroupTests = 2
-    static let maximumConcurrentFallbackTests = 8
-    static let attemptsPerProxy = 1
-    static let defaultTestURL = "https://www.gstatic.com/generate_204"
+public enum LatencyTestPlan {
+    public static let maximumConcurrentGroupTests = 2
+    public static let maximumConcurrentFallbackTests = 8
+    public static let defaultTestURL = "http://www.gstatic.com/generate_204"
+    public static let defaultTimeoutMilliseconds = 5_000
+}
+
+struct LatencyTestSettings: Equatable, Sendable {
+    static let minimumTimeoutMilliseconds = 500
+    static let maximumTimeoutMilliseconds = 30_000
+
+    let testURL: String
+    let timeoutMilliseconds: Int
+
+    init(
+        testURL: String = LatencyTestPlan.defaultTestURL,
+        timeoutMilliseconds: Int = LatencyTestPlan.defaultTimeoutMilliseconds
+    ) {
+        self.testURL = Self.normalizedTestURL(testURL)
+        self.timeoutMilliseconds = Self.normalizedTimeoutMilliseconds(timeoutMilliseconds)
+    }
+
+    static func normalizedTestURL(_ value: String) -> String {
+        validTestURL(value) ?? LatencyTestPlan.defaultTestURL
+    }
+
+    static func validTestURL(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.host?.isEmpty == false else {
+            return nil
+        }
+        return trimmed
+    }
+
+    static func normalizedTimeoutMilliseconds(_ value: Int) -> Int {
+        min(max(value, minimumTimeoutMilliseconds), maximumTimeoutMilliseconds)
+    }
+
+    static func validMeasuredDelay(_ value: Int?) -> Int? {
+        guard let value,
+              (1...maximumTimeoutMilliseconds).contains(value) else {
+            return nil
+        }
+        return value
+    }
 }
 
 struct LatencyGroupTest: Equatable, Sendable {
     let groupName: String
     let url: String
     let nodeNames: Set<String>
+
+    func fallbackTests(excluding measuredNodeNames: Set<String>) -> [LatencyProxyTest] {
+        nodeNames
+            .subtracting(measuredNodeNames)
+            .sorted()
+            .map { LatencyProxyTest(proxyName: $0, url: url) }
+    }
 }
 
 struct LatencyProxyTest: Equatable, Sendable {
@@ -127,14 +189,17 @@ struct LatencyTestBatchPlan: Equatable, Sendable {
 }
 
 enum LatencyTestPlanner {
-    static func plan(groups: [ProxyGroup]) -> LatencyTestBatchPlan {
+    static func plan(
+        groups: [ProxyGroup],
+        settings: LatencyTestSettings = LatencyTestSettings()
+    ) -> LatencyTestBatchPlan {
         let automaticCandidates = groups
             .filter { $0.kind.isAutomatic }
             .map { group in
                 LatencyGroupTest(
                     groupName: group.name,
-                    url: group.testURL.flatMap { $0.isEmpty ? nil : $0 }
-                        ?? LatencyTestPlan.defaultTestURL,
+                    url: group.testURL.flatMap(LatencyTestSettings.validTestURL)
+                        ?? settings.testURL,
                     nodeNames: Set(
                         group.nodes
                             .filter(isLatencyTestable)
@@ -171,7 +236,8 @@ enum LatencyTestPlanner {
                     proxyName: nodeName,
                     url: LatencyTestTargetResolver.testURL(
                         nodeName: nodeName,
-                        groups: groups
+                        groups: groups,
+                        settings: settings
                     )
                 )
             }

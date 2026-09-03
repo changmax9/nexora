@@ -12,7 +12,15 @@ final class MenuBarPanelController: NSObject {
     private let panel: MenuBarPanelWindow
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
+    private var panelRefreshTask: Task<Void, Never>?
     private var fadeGeneration = 0
+
+    private var reducesMotion: Bool {
+        AppMotionPolicy.reducesMotion(
+            systemPreference: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            appPreference: store.reduceMotion
+        )
+    }
 
     init(
         store: AppStore,
@@ -55,7 +63,7 @@ final class MenuBarPanelController: NSObject {
         if let button = statusItem.button {
             button.target = self
             button.action = #selector(togglePanel)
-            button.toolTip = "Clash Glass"
+            button.toolTip = "Nexora"
         }
 
         updateStatusIcon()
@@ -86,6 +94,12 @@ final class MenuBarPanelController: NSObject {
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.makeKey()
+        refreshPanelSnapshot()
+
+        if reducesMotion {
+            panel.alphaValue = 1
+            return
+        }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = MenuBarPanelMotion.fadeInDuration
@@ -101,6 +115,20 @@ final class MenuBarPanelController: NSObject {
         }
     }
 
+    private func refreshPanelSnapshot() {
+        panelRefreshTask?.cancel()
+        panelRefreshTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await self.store.refreshProxies()
+            guard !Task.isCancelled else {
+                return
+            }
+            await self.store.refreshNetworkIdentity()
+        }
+    }
+
     private func hide() {
         guard panel.isVisible else {
             return
@@ -108,6 +136,12 @@ final class MenuBarPanelController: NSObject {
 
         fadeGeneration += 1
         let generation = fadeGeneration
+
+        if reducesMotion {
+            panel.orderOut(nil)
+            panel.alphaValue = 0
+            return
+        }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = MenuBarPanelMotion.fadeOutDuration
@@ -179,7 +213,7 @@ final class MenuBarPanelController: NSObject {
 
     private func updateStatusIcon() {
         let symbolName = store.isStarted ? "shield.lefthalf.filled" : "shield"
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Clash Glass")
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Nexora")
         image?.isTemplate = true
         statusItem.button?.image = image
     }

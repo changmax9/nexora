@@ -6,4 +6,4 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/script/install_mihomo_core.sh"
 "$ROOT_DIR/script/install_runtime_assets.sh"
 
-echo "Clash Glass runtime is ready."
+echo "Nexora runtime is ready."

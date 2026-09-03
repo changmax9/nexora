@@ -3,13 +3,15 @@ import SwiftUI
 public struct ContentView: View {
     @Bindable private var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public init(store: AppStore) {
         self.store = store
     }
 
     public var body: some View {
-        let palette = GlassPalette(colorScheme: colorScheme)
+        let accent = store.accent.color(for: colorScheme)
+        let palette = GlassPalette(colorScheme: colorScheme, accent: accent)
         GeometryReader { geometry in
             let layout = AppChromeLayoutMetrics(
                 availableWidth: Double(geometry.size.width),
@@ -31,9 +33,18 @@ public struct ContentView: View {
             }
         }
         .foregroundStyle(palette.primaryText)
+        .tint(accent)
+        .accentColor(accent)
+        .environment(
+            \.clashGlassReduceMotion,
+            AppMotionPolicy.reducesMotion(
+                systemPreference: accessibilityReduceMotion,
+                appPreference: store.reduceMotion
+            )
+        )
         .containerBackground(palette.background, for: .window)
         .alert(
-            "Clash Glass",
+            "Nexora",
             isPresented: Binding(
                 get: { store.lastErrorMessage != nil },
                 set: { if !$0 { store.lastErrorMessage = nil } }
@@ -58,16 +69,16 @@ public struct ContentView: View {
 private struct IconRail: View {
     @Bindable var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
     @State private var hoverState = RailHoverState()
 
     private let primarySections: [AppSection] = [
         .dashboard,
+        .diagnostics,
         .proxies,
         .routing,
         .profiles,
-        .requests,
         .connections,
         .settings,
     ]
@@ -195,15 +206,16 @@ private struct MainStage: View {
     @Bindable var store: AppStore
     let layout: AppChromeLayoutMetrics
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var showsCoreRestartConfirmation = false
     @State private var showsProfileRename = false
     @State private var renameProfileID: ManagedProfile.ID?
     @State private var renameDraft = ""
+    @State private var isQuickEditHovering = false
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: CGFloat(MainStageLayoutMetrics.toolbarToContentSpacing)) {
             HStack(alignment: .center) {
                 ZStack(alignment: .leading) {
                     Text(store.text(store.selectedSection.titleKey))
@@ -220,7 +232,18 @@ private struct MainStage: View {
 
                 Spacer()
 
-                HStack(spacing: 18) {
+                HStack(spacing: 10) {
+                    LiquidIconButton(
+                        title: store.isStarted ? store.text(.pause) : store.text(.start),
+                        symbol: store.isStarted ? "pause.fill" : "play.fill",
+                        tint: palette.rose.opacity(0.48),
+                        size: CGFloat(ToolbarControlMetrics.visibleSize)
+                    ) {
+                        Task {
+                            await store.toggleRuntime(configPath: store.configPath)
+                        }
+                    }
+
                     CoreStatusToolbarButton(
                         symbol: coreStatusSymbol,
                         isRunning: store.isCoreRunning,
@@ -231,7 +254,8 @@ private struct MainStage: View {
 
                     ZStack {
                         ToolbarMenuIconSurface(
-                            symbol: ToolbarControlAppearancePolicy.quickEditSymbol
+                            symbol: ToolbarControlAppearancePolicy.quickEditSymbol,
+                            isHovering: isQuickEditHovering
                         )
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
@@ -292,27 +316,20 @@ private struct MainStage: View {
                     .help(store.text(.quickEdit))
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(store.text(.quickEdit))
+                    .onHover { isQuickEditHovering = $0 }
                 }
             }
-            .frame(width: CGFloat(layout.stageWidth), height: 36)
+            .frame(
+                width: CGFloat(layout.stageWidth),
+                height: CGFloat(MainStageLayoutMetrics.toolbarHeight)
+            )
 
-            ZStack(alignment: .bottomTrailing) {
-                ZStack(alignment: .topLeading) {
-                    selectedSectionContent
-                        .id(store.selectedSection)
-                        .transition(.opacity)
-                }
-                .frame(width: CGFloat(layout.stageWidth), height: CGFloat(layout.stageHeight - 64), alignment: .topLeading)
-                .animation(
-                    PageNavigationTransitionPolicy.animation(reduceMotion: reduceMotion),
-                    value: store.selectedSection
+            selectedSectionContent
+                .frame(
+                    width: CGFloat(layout.stageWidth),
+                    height: CGFloat(MainStageLayoutMetrics.contentHeight(stageHeight: layout.stageHeight)),
+                    alignment: .topLeading
                 )
-
-                StartFloatingButton(store: store)
-                    .padding(.trailing, 28)
-                    .padding(.bottom, 28)
-            }
-            .frame(width: CGFloat(layout.stageWidth), height: CGFloat(layout.stageHeight - 64), alignment: .topLeading)
 
             Spacer(minLength: 0)
         }
@@ -353,20 +370,16 @@ private struct MainStage: View {
         switch store.selectedSection {
         case .dashboard:
             DashboardView(store: store, availableWidth: layout.stageWidth)
+        case .diagnostics:
+            DiagnosticsView(store: store)
         case .proxies:
             ProxiesView(store: store)
         case .routing:
             RoutingView(store: store)
         case .profiles:
             ProfilesView(store: store)
-        case .requests:
-            RequestsView(store: store)
         case .connections:
             ConnectionsView(store: store)
-        case .resources:
-            ResourcesView(store: store)
-        case .logs:
-            LogsView(store: store)
         case .settings:
             AppSettingsView(store: store)
         }
@@ -395,46 +408,5 @@ private struct MainStage: View {
         renameProfileID = profile.id
         renameDraft = profile.name
         showsProfileRename = true
-    }
-}
-
-private struct StartFloatingButton: View {
-    @Bindable var store: AppStore
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let palette = GlassPalette(colorScheme: colorScheme)
-        Button {
-            Task {
-                await store.toggleRuntime(configPath: store.configPath)
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: store.isStarted ? "pause.fill" : "play.fill")
-                    .font(.system(size: store.isStarted ? 17 : 19, weight: .bold))
-                    .frame(width: store.isStarted ? 18 : 20)
-
-                if store.isStarted {
-                    Text(store.runTimeText)
-                        .font(.system(size: 17, weight: .semibold, design: .rounded).monospacedDigit())
-                        .lineLimit(1)
-                } else if store.coreStatus == .missingCoreBinary {
-                    Image(systemName: "exclamationmark")
-                        .font(.system(size: 14, weight: .black))
-                        .frame(width: 10)
-                }
-            }
-            .foregroundStyle(palette.brown)
-            .frame(width: store.isStarted ? 146 : 56, height: 56)
-        }
-        .buttonStyle(LiquidGlassButtonStyle(
-            radius: 17,
-            tint: palette.rose.opacity(0.48),
-            hoverScale: 1.075,
-            pressedScale: 0.91
-        ))
-        .help(store.isStarted ? store.text(.pause) : store.text(.start))
-        .animation(.spring(response: 0.36, dampingFraction: 0.72), value: store.isStarted)
-        .animation(.spring(response: 0.36, dampingFraction: 0.72), value: store.coreStatus)
     }
 }

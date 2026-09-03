@@ -34,57 +34,73 @@ enum GlassCardVisualMetrics {
 
 struct GlassPalette {
     let colorScheme: ColorScheme
+    let accent: Color
+
+    init(colorScheme: ColorScheme, accent: Color = .accentColor) {
+        self.colorScheme = colorScheme
+        self.accent = accent
+    }
 
     var background: Color {
-        colorScheme == .dark ? Color(red: 0.08, green: 0.07, blue: 0.07) : Color(red: 1.00, green: 0.97, blue: 0.97)
+        colorScheme == .dark ? .black : .white
     }
 
     var cardFill: Color {
-        colorScheme == .dark ? Color.white.opacity(0.035) : Color.white.opacity(0.24)
+        colorScheme == .dark
+            ? Color.white.opacity(0.055)
+            : Color.black.opacity(0.035)
     }
 
     var cardStroke: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.07)
+        colorScheme == .dark
+            ? Color.white.opacity(0.16)
+            : Color.black.opacity(0.14)
     }
 
     var primaryText: Color {
-        colorScheme == .dark ? Color(red: 0.94, green: 0.88, blue: 0.90) : Color(red: 0.12, green: 0.10, blue: 0.11)
+        colorScheme == .dark
+            ? Color.white.opacity(0.96)
+            : Color.black.opacity(0.94)
     }
 
     var secondaryText: Color {
-        colorScheme == .dark ? Color(red: 0.78, green: 0.70, blue: 0.73) : Color(red: 0.31, green: 0.27, blue: 0.28)
+        colorScheme == .dark
+            ? Color.white.opacity(0.70)
+            : Color.black.opacity(0.68)
     }
 
     var tertiaryText: Color {
-        colorScheme == .dark ? Color(red: 0.62, green: 0.56, blue: 0.58) : Color(red: 0.50, green: 0.45, blue: 0.46)
+        colorScheme == .dark
+            ? Color.white.opacity(0.46)
+            : Color.black.opacity(0.48)
     }
 
     var rose: Color {
-        colorScheme == .dark ? Color(red: 0.95, green: 0.82, blue: 0.85) : Color(red: 0.86, green: 0.74, blue: 0.77)
+        accent
     }
 
     var brown: Color {
-        colorScheme == .dark ? Color(red: 0.26, green: 0.18, blue: 0.20) : Color(red: 0.44, green: 0.35, blue: 0.37)
+        accent
     }
 
     var railSelection: Color {
-        colorScheme == .dark ? Color.white.opacity(0.18) : Color(red: 0.96, green: 0.88, blue: 0.90)
+        rose.opacity(colorScheme == .dark ? 0.22 : 0.16)
     }
 
     var selectionTrack: Color {
-        colorScheme == .dark ? Color.white.opacity(0.06) : rose.opacity(0.10)
+        rose.opacity(colorScheme == .dark ? 0.08 : 0.07)
     }
 
     var selectionFill: Color {
-        colorScheme == .dark ? rose.opacity(0.28) : railSelection.opacity(0.90)
+        rose.opacity(colorScheme == .dark ? 0.26 : 0.18)
     }
 
     var selectionHover: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : rose.opacity(0.14)
+        rose.opacity(colorScheme == .dark ? 0.12 : 0.10)
     }
 
     var selectionStroke: Color {
-        colorScheme == .dark ? rose.opacity(0.32) : rose.opacity(0.36)
+        rose.opacity(colorScheme == .dark ? 0.46 : 0.40)
     }
 
     var green: Color {
@@ -92,11 +108,14 @@ struct GlassPalette {
     }
 
     var shadow: Color {
-        colorScheme == .dark ? Color.clear : Color.black.opacity(0.18)
+        colorScheme == .dark
+            ? Color.clear
+            : Color.black.opacity(0.14)
     }
 }
 
 struct LiquidGlassSurface<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let radius: CGFloat
     let padding: CGFloat
     @ViewBuilder let content: Content
@@ -108,20 +127,29 @@ struct LiquidGlassSurface<Content: View>: View {
     }
 
     var body: some View {
+        let palette = GlassPalette(colorScheme: colorScheme)
         Group {
             if #available(macOS 26.0, *) {
                 content
                     .padding(padding)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius))
+                    .background(
+                        palette.cardFill,
+                        in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    )
+                    .glassEffect(.clear.interactive(), in: .rect(cornerRadius: radius))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .strokeBorder(palette.cardStroke, lineWidth: 0.8)
+                    }
             } else {
                 content
                     .padding(padding)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .background(palette.cardFill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .strokeBorder(.white.opacity(0.32), lineWidth: 0.8)
+                            .strokeBorder(palette.cardStroke, lineWidth: 0.8)
                     }
-                    .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
+                    .shadow(color: palette.shadow.opacity(0.20), radius: 14, y: 6)
             }
         }
     }
@@ -129,7 +157,7 @@ struct LiquidGlassSurface<Content: View>: View {
 
 struct GlassCard<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
     let radius: CGFloat
     let padding: CGFloat
@@ -171,7 +199,7 @@ struct GlassCard<Content: View>: View {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(
                     isHovering ? palette.selectionStroke.opacity(0.82) : palette.cardStroke,
-                    lineWidth: isHovering ? 1.7 : 1.4
+                    lineWidth: isHovering ? 1.25 : 0.9
                 )
         }
         .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
@@ -186,43 +214,9 @@ struct GlassCard<Content: View>: View {
             y: GlassCardVisualMetrics.shadowVerticalOffset
         )
         .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.30, dampingFraction: 0.74), value: isHovering)
-    }
-}
-
-struct LiquidSectionTitle: View {
-    let title: String
-    let subtitle: String
-    let symbol: String
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            Image(systemName: symbol)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.primary)
-                .frame(width: 48, height: 48)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.largeTitle.weight(.semibold))
-                Text(subtitle)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
-    }
-}
-
-struct StatusDot: View {
-    let isOn: Bool
-
-    var body: some View {
-        Circle()
-            .fill(isOn ? .green : .secondary)
-            .frame(width: 9, height: 9)
-            .shadow(color: (isOn ? Color.green : Color.clear).opacity(0.5), radius: 6)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.74),
+            value: isHovering
+        )
     }
 }

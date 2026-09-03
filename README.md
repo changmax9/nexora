@@ -1,18 +1,18 @@
 <p align="center">
-  <img src="Assets/AppIcon.png" width="128" alt="Clash Glass icon">
+  <img src="Assets/AppIcon.png" width="128" alt="Nexora icon">
 </p>
 
-<h1 align="center">Clash Glass</h1>
+<h1 align="center">Nexora</h1>
 
 <p align="center">
   A lightweight, native macOS client powered by <a href="https://github.com/MetaCubeX/mihomo">Mihomo</a>.
 </p>
 
-Clash Glass is written in SwiftUI for macOS. It manages local Mihomo profiles,
+Nexora is written in SwiftUI for macOS. It manages local Mihomo profiles,
 proxy groups, routing overrides, connections, logs, system proxy settings, and
 TUN state through Mihomo's controller API.
 
-> Clash Glass is an independent community project and is not affiliated with
+> Nexora is an independent community project and is not affiliated with
 > MetaCubeX.
 
 ## Highlights
@@ -74,7 +74,7 @@ available.
 
 The `SPARKLE_PRIVATE_KEY` repository secret must remain configured. Application
 preferences stay in `~/Library/Preferences`, while profiles and runtime data
-stay in `~/Library/Application Support/Clash Glass`; replacing the app bundle
+stay in `~/Library/Application Support/Nexora`; replacing the app bundle
 does not remove either location.
 
 Current community builds use ad-hoc code signing rather than Apple Developer ID
@@ -91,5 +91,5 @@ were produced with the project's private update key.
 
 ## License
 
-Clash Glass is available under the MIT License. Mihomo and Geo data retain
+Nexora is available under the MIT License. Mihomo and Geo data retain
 their respective upstream licenses; see [NOTICE.md](NOTICE.md).

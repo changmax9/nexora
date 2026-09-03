@@ -9,7 +9,7 @@ struct ClashGlassApp: App {
     @State private var store = AppStore()
 
     var body: some Scene {
-        WindowGroup("Clash Glass", id: "main") {
+        WindowGroup("Nexora", id: "main") {
             ContentView(store: store)
                 .preferredColorScheme(
                     store.appearanceMode.resolvedColorScheme(
@@ -24,11 +24,17 @@ struct ClashGlassApp: App {
                         store.selectedSection = selected
                     }
                 }
-                .frame(minWidth: 760, minHeight: 540)
+                .frame(
+                    minWidth: CGFloat(MainWindowLayoutMetrics.minimumWidth),
+                    minHeight: CGFloat(MainWindowLayoutMetrics.minimumHeight)
+                )
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 980, height: 720)
+        .defaultSize(
+            width: CGFloat(MainWindowLayoutMetrics.defaultWidth),
+            height: CGFloat(MainWindowLayoutMetrics.defaultHeight)
+        )
     }
 }
 
@@ -83,14 +89,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
             }
 
             for window in windows {
+                let contentSize = window.contentLayoutRect.size
+                window.contentMinSize = NSSize(
+                    width: CGFloat(MainWindowLayoutMetrics.minimumWidth),
+                    height: CGFloat(MainWindowLayoutMetrics.minimumHeight)
+                )
+                if MainWindowLayoutMetrics.needsLaunchExpansion(
+                    width: Double(contentSize.width),
+                    height: Double(contentSize.height)
+                ) {
+                    window.setContentSize(NSSize(
+                        width: CGFloat(MainWindowLayoutMetrics.defaultWidth),
+                        height: CGFloat(MainWindowLayoutMetrics.defaultHeight)
+                    ))
+                    window.center()
+                }
                 window.titlebarAppearsTransparent = true
                 window.isMovableByWindowBackground = true
                 window.titleVisibility = .hidden
                 window.toolbarStyle = .unifiedCompact
                 window.backgroundColor = NSColor(name: nil) { appearance in
                     appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                        ? NSColor(red: 0.08, green: 0.07, blue: 0.07, alpha: 1)
-                        : NSColor(red: 1.00, green: 0.97, blue: 0.97, alpha: 1)
+                        ? .black
+                        : .white
                 }
                 window.collectionBehavior.insert(.moveToActiveSpace)
                 window.orderFrontRegardless()
@@ -174,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
 private struct UpdateTitlebarCapsule: View {
     @Bindable var store: AppStore
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -192,11 +214,21 @@ private struct UpdateTitlebarCapsule: View {
             }
         }
         .buttonStyle(.plain)
-        .scaleEffect(isHovering ? 1.04 : 1)
+        .scaleEffect(isHovering && !reduceMotion ? 1.04 : 1)
         .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isHovering)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.75),
+            value: isHovering
+        )
         .padding(.leading, 4)
         .padding(.vertical, 3)
         .help(store.text(.update))
+    }
+
+    private var reduceMotion: Bool {
+        AppMotionPolicy.reducesMotion(
+            systemPreference: accessibilityReduceMotion,
+            appPreference: store.reduceMotion
+        )
     }
 }

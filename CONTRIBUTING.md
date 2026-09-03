@@ -1,6 +1,6 @@
 # Contributing
 
-Clash Glass uses Swift Package Manager and targets macOS 15 or later.
+Nexora uses Swift Package Manager and targets macOS 15 or later.
 
 Before opening a pull request:
 

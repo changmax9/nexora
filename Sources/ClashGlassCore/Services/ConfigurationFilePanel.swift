@@ -20,15 +20,4 @@ enum ConfigurationFilePanel {
     static func reveal(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
-
-    static func saveLogs(_ content: String) throws {
-        let panel = NSSavePanel()
-        panel.title = "Export Clash Glass Logs"
-        panel.nameFieldStringValue = "clash-glass.log"
-        panel.allowedContentTypes = [.plainText]
-        guard panel.runModal() == .OK, let url = panel.url else {
-            return
-        }
-        try content.write(to: url, atomically: true, encoding: .utf8)
-    }
 }

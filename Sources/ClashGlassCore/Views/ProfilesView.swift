@@ -151,6 +151,12 @@ struct ProfilesView: View {
     }
 }
 
+enum ProfileCardActionLayoutMetrics {
+    static let spacing: CGFloat = 8
+    static let minimumGap: CGFloat = 8
+    static let usesStackedFallback = true
+}
+
 private struct ManagedProfileCard: View {
     let profile: ManagedProfile
     let isSelected: Bool
@@ -202,23 +208,56 @@ private struct ManagedProfileCard: View {
                         .foregroundStyle(palette.tertiaryText)
                 }
 
-                HStack(spacing: 8) {
-                    LiquidActionButton(
-                        title: isSelected ? language.text(.selected) : language.text(.use),
-                        symbol: isSelected ? "checkmark" : "play",
-                        tint: isSelected ? palette.rose.opacity(0.24) : nil,
-                        compact: true,
-                        action: select
-                    )
-                    Spacer()
-                    LiquidIconButton(title: language.text(.validate), symbol: "checkmark.shield", size: 28, action: validate)
-                    LiquidIconButton(title: language.text(.revealInFinder), symbol: "folder", size: 28, action: reveal)
-                    LiquidIconButton(title: language.text(.rename), symbol: "pencil", size: 28, action: rename)
-                    LiquidIconButton(title: language.text(.delete), symbol: "trash", tint: .red.opacity(0.18), size: 28, action: delete)
-                }
+                profileActions(palette: palette)
             }
             .frame(maxWidth: .infinity, minHeight: 168, alignment: .leading)
         }
+    }
+
+    private func profileActions(palette: GlassPalette) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: ProfileCardActionLayoutMetrics.spacing) {
+                selectionButton(palette: palette)
+                Spacer(minLength: ProfileCardActionLayoutMetrics.minimumGap)
+                secondaryActionButtons(palette: palette)
+            }
+
+            VStack(alignment: .leading, spacing: ProfileCardActionLayoutMetrics.spacing) {
+                selectionButton(palette: palette)
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    secondaryActionButtons(palette: palette)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func selectionButton(palette: GlassPalette) -> some View {
+        LiquidActionButton(
+            title: isSelected ? language.text(.selected) : language.text(.use),
+            symbol: isSelected ? "checkmark" : "play",
+            tint: isSelected ? palette.rose.opacity(0.24) : nil,
+            compact: true,
+            action: select
+        )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func secondaryActionButtons(palette: GlassPalette) -> some View {
+        HStack(spacing: ProfileCardActionLayoutMetrics.spacing) {
+            LiquidIconButton(title: language.text(.validate), symbol: "checkmark.shield", size: 28, action: validate)
+            LiquidIconButton(title: language.text(.revealInFinder), symbol: "folder", size: 28, action: reveal)
+            LiquidIconButton(title: language.text(.rename), symbol: "pencil", size: 28, action: rename)
+            LiquidIconButton(
+                title: language.text(.delete),
+                symbol: "trash",
+                tint: palette.secondaryText.opacity(0.14),
+                size: 28,
+                action: delete
+            )
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

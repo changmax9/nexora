@@ -119,6 +119,7 @@ struct CoreStatusToolbarButton: View {
     let accessibilityTitle: String
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -192,9 +193,12 @@ struct CoreStatusToolbarButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .scaleEffect(isHovering ? 1.04 : 1)
+        .scaleEffect(isHovering && !reduceMotion ? 1.04 : 1)
         .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isHovering)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72),
+            value: isHovering
+        )
         .help(accessibilityTitle)
         .accessibilityLabel(accessibilityTitle)
     }
@@ -203,21 +207,16 @@ struct CoreStatusToolbarButton: View {
 struct ToolbarMenuIconSurface: View {
     let symbol: String
     var size: CGFloat = CGFloat(ToolbarControlMetrics.visibleSize)
+    var isHovering = false
     @Environment(\.colorScheme) private var colorScheme
-    @State private var isHovering = false
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        let referenceSurface = Color(
-            red: 255.0 / 255.0,
-            green: 251.0 / 255.0,
-            blue: 251.0 / 255.0
-        )
-        let referenceInk = Color(
-            red: 31.0 / 255.0,
-            green: 25.0 / 255.0,
-            blue: 29.0 / 255.0
-        )
+        let referenceSurface = colorScheme == .dark
+            ? Color.white
+            : Color.black
+        let referenceInk = colorScheme == .dark ? Color.black : Color.white
         ZStack {
             Color.clear
                 .frame(
@@ -257,7 +256,7 @@ struct ToolbarMenuIconSurface: View {
                     radius: isHovering ? 9 : 6,
                     y: 3
                 )
-                .scaleEffect(isHovering ? 1.04 : 1)
+                .scaleEffect(isHovering && !reduceMotion ? 1.04 : 1)
         }
         .frame(
             width: CGFloat(ToolbarControlMetrics.hitTarget),
@@ -265,8 +264,10 @@ struct ToolbarMenuIconSurface: View {
             alignment: .center
         )
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isHovering)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72),
+            value: isHovering
+        )
     }
 }
 
@@ -390,7 +391,7 @@ private struct LiquidGlassButtonBody<Label: View>: View {
     let hoverScale: Double
     let pressedScale: Double
     @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -425,8 +426,14 @@ private struct LiquidGlassButtonBody<Label: View>: View {
             radius: 10,
             y: 5
         )
-        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isHovering)
-        .animation(.spring(response: 0.20, dampingFraction: 0.68), value: isPressed)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72),
+            value: isHovering
+        )
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.68),
+            value: isPressed
+        )
         .onHover { isHovering = $0 }
     }
 }
@@ -466,6 +473,7 @@ struct LiquidActionButton: View {
                 .font(.system(size: compact ? 11 : 13, weight: .bold, design: .rounded))
                 .padding(.horizontal, compact ? 10 : 14)
                 .frame(height: compact ? 28 : 34)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(LiquidGlassButtonStyle(radius: compact ? 10 : 12, tint: tint))
         .accessibilityLabel(title)
@@ -477,20 +485,21 @@ struct LiquidToggle: View {
     var tint: Color? = nil
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
+        let activeTint = tint ?? palette.green
         Button(action: action) {
             ZStack(alignment: isOn ? .trailing : .leading) {
                 Capsule(style: .continuous)
-                    .fill(isOn ? (tint ?? palette.rose).opacity(0.80) : palette.tertiaryText.opacity(0.20))
+                    .fill(isOn ? activeTint.opacity(0.80) : palette.tertiaryText.opacity(0.20))
                     .frame(width: 52, height: 32)
                     .overlay {
                         Capsule(style: .continuous)
                             .strokeBorder(
-                                isHovering ? (tint ?? palette.rose).opacity(0.62) : Color.primary.opacity(0.08),
+                                isHovering ? activeTint.opacity(0.62) : Color.primary.opacity(0.08),
                                 lineWidth: isHovering ? 1.4 : 1
                             )
                     }
@@ -509,14 +518,24 @@ struct LiquidToggle: View {
         }
         .buttonStyle(LiquidGlassButtonStyle(
             radius: 16,
-            tint: isOn ? tint ?? palette.rose.opacity(0.25) : nil,
+            tint: isOn ? activeTint.opacity(0.25) : nil,
             hoverScale: 1.05,
             pressedScale: 0.94
         ))
         .onHover { hovering in
             isHovering = hovering
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.64), value: isHovering)
-        .animation(.spring(response: 0.30, dampingFraction: 0.70), value: isOn)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.64),
+            value: isHovering
+        )
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.70),
+            value: isOn
+        )
+        .frame(
+            width: 52,
+            height: CGFloat(LiquidControlInteractionPolicy.minimumHitTarget)
+        )
     }
 }

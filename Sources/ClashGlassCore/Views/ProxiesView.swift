@@ -14,6 +14,7 @@ struct ProxiesView: View {
     @State private var nodeFilter: ProxyNodeFilter = .all
     @State private var expansionState = ProxyGroupExpansionState()
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
 
     var body: some View {
         FeaturePage(
@@ -63,7 +64,7 @@ struct ProxiesView: View {
     }
 
     private var toolbarActions: [FeatureAction] {
-        var actions = [
+        [
             FeatureAction(
                 title: store.isLatencyTesting ? store.latencyTestProgress.text : store.text(.refresh),
                 symbol: store.isLatencyTesting ? "hourglass" : "arrow.clockwise",
@@ -71,31 +72,10 @@ struct ProxiesView: View {
             ) {
                 Task { await store.refreshProxiesAndLatency() }
             },
-        ]
-
-        if ProxiesToolbarPolicy.showsSeparateDelayTestAction {
-            actions.append(
-                FeatureAction(
-                    title: store.text(.delayTest),
-                    symbol: "speedometer",
-                    isDisabled: store.isLatencyTesting
-                ) {
-                    Task { await store.delayTestAll() }
-                }
-            )
-        }
-
-        actions.append(
-            FeatureAction(title: store.text(.providers), symbol: "chart.bar.doc.horizontal") {
-                store.selectedSection = .resources
-            }
-        )
-        actions.append(
             FeatureAction(title: store.text(.settings), symbol: "slider.horizontal.3") {
                 store.selectedSection = .settings
-            }
-        )
-        return actions
+            },
+        ]
     }
 
     private var filteredGroups: [ProxyGroup] {
@@ -143,7 +123,7 @@ struct ProxiesView: View {
                             Spacer()
                             StatusChip(text: "\(group.nodes.count)", symbol: "server.rack")
                             Button {
-                                withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
+                                withAnimation(reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.78)) {
                                     expansionState.toggle(group.name)
                                 }
                             } label: {
@@ -227,7 +207,7 @@ private struct ProxyNodeCard: View {
     let isTesting: Bool
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -237,7 +217,7 @@ private struct ProxyNodeCard: View {
                 HStack {
                     Image(systemName: node.isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(node.isSelected ? palette.green : palette.tertiaryText)
+                        .foregroundStyle(node.isSelected ? palette.rose : palette.tertiaryText)
                     Spacer()
                     Text(latencyText)
                         .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
@@ -269,8 +249,14 @@ private struct ProxyNodeCard: View {
         .brightness(isHovering ? 0.02 : 0)
         .shadow(color: .black.opacity(isHovering && !reduceMotion ? 0.10 : 0), radius: 9, y: 5)
         .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.26, dampingFraction: 0.72), value: isHovering)
-        .animation(.spring(response: 0.24, dampingFraction: 0.78), value: node.isSelected)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.72),
+            value: isHovering
+        )
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.78),
+            value: node.isSelected
+        )
     }
 
     private var latencyText: String {
@@ -292,6 +278,7 @@ private struct ProxyNodeRow: View {
     let isTesting: Bool
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -300,7 +287,7 @@ private struct ProxyNodeRow: View {
             HStack(spacing: 12) {
                 Image(systemName: node.isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(node.isSelected ? palette.green : palette.secondaryText)
+                    .foregroundStyle(node.isSelected ? palette.rose : palette.secondaryText)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(node.name)
@@ -328,7 +315,10 @@ private struct ProxyNodeRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.24, dampingFraction: 0.76), value: isHovering)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.76),
+            value: isHovering
+        )
     }
 
     private var latencyText: String {

@@ -24,17 +24,17 @@ enum RailSelectionResolver {
         switch section {
         case .dashboard:
             .section(.dashboard)
-        case .proxies, .resources:
+        case .diagnostics:
+            .section(.diagnostics)
+        case .proxies:
             .section(.proxies)
         case .routing:
             .section(.routing)
         case .profiles:
             .section(.profiles)
-        case .requests:
-            .section(.requests)
         case .connections:
             .section(.connections)
-        case .logs, .settings:
+        case .settings:
             .section(.settings)
         }
     }

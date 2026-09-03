@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClashGlass",
+    name: "Nexora",
     platforms: [
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "ClashGlass", targets: ["ClashGlass"])
+        .executable(name: "Nexora", targets: ["ClashGlass"])
     ],
     dependencies: [
         .package(

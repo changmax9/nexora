@@ -3,13 +3,11 @@ import SwiftUI
 
 public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case dashboard
+    case diagnostics
     case proxies
     case routing
     case profiles
-    case requests
     case connections
-    case resources
-    case logs
     case settings
 
     public var id: String { rawValue }
@@ -21,13 +19,11 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     public var titleKey: AppString {
         switch self {
         case .dashboard: .dashboard
+        case .diagnostics: .diagnostics
         case .proxies: .proxies
         case .routing: .routing
         case .profiles: .profiles
-        case .requests: .requests
         case .connections: .connections
-        case .resources: .resources
-        case .logs: .logs
         case .settings: .settings
         }
     }
@@ -35,13 +31,11 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     var symbol: String {
         switch self {
         case .dashboard: "square.grid.2x2.fill"
+        case .diagnostics: "stethoscope"
         case .proxies: "doc.text.fill"
         case .routing: "point.3.connected.trianglepath.dotted"
         case .profiles: "folder.fill"
-        case .requests: "text.line.first.and.arrowtriangle.forward"
         case .connections: "list.bullet.rectangle.fill"
-        case .resources: "server.rack"
-        case .logs: "terminal.fill"
         case .settings: "wrench.and.screwdriver.fill"
         }
     }
@@ -89,6 +83,28 @@ public enum OutboundMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+public enum NetworkEgressKind: String, Equatable, Sendable {
+    case detecting
+    case direct
+    case proxy
+    case systemTunnel
+    case unavailable
+
+    var titleKey: AppString {
+        switch self {
+        case .detecting: .detectingEgress
+        case .direct: .directEgress
+        case .proxy: .proxyEgress
+        case .systemTunnel: .systemTunnelEgress
+        case .unavailable: .unavailableEgress
+        }
+    }
+
+    func title(language: AppLanguage) -> String {
+        language.text(titleKey)
+    }
+}
+
 public enum AppAppearance: String, CaseIterable, Identifiable, Sendable {
     case system
     case light
@@ -109,42 +125,63 @@ public enum AppAppearance: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum SettingsGroupKind: Hashable, Sendable {
-    case appearance
-    case language
-    case about
-}
+public enum NexoraAccent: String, CaseIterable, Identifiable, Sendable {
+    case terracotta
+    case cocoa
+    case sand
+    case ocean
+    case cobalt
+    case iris
+    case violet
+    case orchid
+    case plum
+    case slate
+    case graphite
 
-enum SettingsPagePolicy {
-    static let usesSinglePage = true
-    static let showsSectionTabs = false
-    static let groups: [SettingsGroupKind] = [
-        .appearance,
-        .language,
-        .about,
-    ]
-}
+    public var id: Self { self }
 
-public enum DashboardWidgetKind: String, CaseIterable, Identifiable, Sendable {
-    case networkSpeed
-    case systemProxyButton
-    case tunButton
-    case outboundMode
-    case networkDetection
-    case trafficUsage
-    case intranetIp
+    public var title: String {
+        switch self {
+        case .terracotta: "Terracotta"
+        case .cocoa: "Cocoa"
+        case .sand: "Sand"
+        case .ocean: "Ocean"
+        case .cobalt: "Cobalt"
+        case .iris: "Iris"
+        case .violet: "Violet"
+        case .orchid: "Orchid"
+        case .plum: "Plum"
+        case .slate: "Slate"
+        case .graphite: "Graphite"
+        }
+    }
 
-    public var id: String { rawValue }
-
-    public static let defaultOrder: [DashboardWidgetKind] = [
-        .networkSpeed,
-        .systemProxyButton,
-        .tunButton,
-        .outboundMode,
-        .networkDetection,
-        .trafficUsage,
-        .intranetIp,
-    ]
+    public func color(for colorScheme: ColorScheme) -> Color {
+        switch (self, colorScheme) {
+        case (.terracotta, .dark): Color(red: 0.80, green: 0.50, blue: 0.39)
+        case (.terracotta, _): Color(red: 0.62, green: 0.34, blue: 0.27)
+        case (.cocoa, .dark): Color(red: 0.71, green: 0.58, blue: 0.50)
+        case (.cocoa, _): Color(red: 0.43, green: 0.32, blue: 0.27)
+        case (.sand, .dark): Color(red: 0.78, green: 0.68, blue: 0.49)
+        case (.sand, _): Color(red: 0.50, green: 0.40, blue: 0.23)
+        case (.ocean, .dark): Color(red: 0.38, green: 0.68, blue: 0.86)
+        case (.ocean, _): Color(red: 0.18, green: 0.45, blue: 0.68)
+        case (.cobalt, .dark): Color(red: 0.43, green: 0.56, blue: 0.91)
+        case (.cobalt, _): Color(red: 0.23, green: 0.35, blue: 0.70)
+        case (.iris, .dark): Color(red: 0.57, green: 0.49, blue: 0.87)
+        case (.iris, _): Color(red: 0.38, green: 0.30, blue: 0.67)
+        case (.violet, .dark): Color(red: 0.69, green: 0.45, blue: 0.84)
+        case (.violet, _): Color(red: 0.48, green: 0.28, blue: 0.63)
+        case (.orchid, .dark): Color(red: 0.81, green: 0.48, blue: 0.71)
+        case (.orchid, _): Color(red: 0.58, green: 0.29, blue: 0.49)
+        case (.plum, .dark): Color(red: 0.70, green: 0.44, blue: 0.58)
+        case (.plum, _): Color(red: 0.48, green: 0.26, blue: 0.37)
+        case (.slate, .dark): Color(red: 0.58, green: 0.64, blue: 0.72)
+        case (.slate, _): Color(red: 0.32, green: 0.39, blue: 0.49)
+        case (.graphite, .dark): Color.white.opacity(0.72)
+        case (.graphite, _): Color.black.opacity(0.62)
+        }
+    }
 }
 
 public enum ProfileValidationKind: String, Sendable {
@@ -240,42 +277,6 @@ enum ProfileHealthFilter: String, CaseIterable, Identifiable, Sendable {
             language.text(.notValidated)
         case .valid:
             language.text(.valid)
-        }
-    }
-}
-
-enum LogLevelFilter: String, CaseIterable, Identifiable, Sendable {
-    case all
-    case errors
-    case warnings
-    case info
-    case debug
-
-    var id: Self { self }
-
-    func matches(_ level: String) -> Bool {
-        let normalized = level.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return switch self {
-        case .all:
-            true
-        case .errors:
-            normalized == "error" || normalized == "fatal"
-        case .warnings:
-            normalized == "warning" || normalized == "warn"
-        case .info:
-            normalized == "info"
-        case .debug:
-            normalized == "debug"
-        }
-    }
-
-    func title(language: AppLanguage) -> String {
-        switch self {
-        case .all: language.text(.allLogs)
-        case .errors: language.text(.errors)
-        case .warnings: language.text(.warnings)
-        case .info: language.text(.info)
-        case .debug: language.text(.debug)
         }
     }
 }
@@ -422,52 +423,9 @@ public enum MenuBarPanelMotion {
     public static let usesCustomWindowAnimator = true
     public static let usesCustomContentFade = false
     public static let startsWindowTransparent = true
+    public static let respectsReducedMotion = true
     public static let fadeInDuration: TimeInterval = 0.30
     public static let fadeOutDuration: TimeInterval = 0.24
-}
-
-enum InterfaceCopy {
-    static let vpn = "VPN"
-    static let systemProxy = "System Proxy"
-    static let networkSpeed = "Network Speed"
-    static let networkDetection = "Network Detection"
-    static let outboundMode = "Outbound Mode"
-    static let trafficUsage = "Traffic Usage"
-    static let intranetIP = "Intranet IP"
-
-    static let multiwordTitles = [
-        systemProxy,
-        networkSpeed,
-        networkDetection,
-        outboundMode,
-        trafficUsage,
-        intranetIP,
-        "Core Status",
-        "Dashboard Settings",
-        "Search Proxies",
-        "Search Routing",
-        "Search Profiles",
-        "Search Requests",
-        "Search Connections",
-        "Search Resources",
-        "Search Logs",
-        "Validate All",
-        "Open Managed Folder",
-        "Close All",
-        "Open Folder",
-        "Open Logs",
-        "Selected Profile",
-        "Runtime Config",
-        "Managed Profiles",
-        "Network Service",
-        "Color Scheme",
-        "Reduce Motion",
-        "Mihomo Process",
-        "Last Error",
-        "Validate Profiles",
-        "Refresh Runtime",
-        "Open Logs Page",
-    ]
 }
 
 struct ConnectionEntry: Identifiable {
@@ -478,12 +436,4 @@ struct ConnectionEntry: Identifiable {
     let chain: String
     let upload: String
     let download: String
-}
-
-struct LogEntry: Identifiable {
-    let id = UUID()
-    let level: String
-    let message: String
-    let time: String
-    let tint: Color
 }

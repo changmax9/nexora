@@ -111,7 +111,8 @@ import Testing
     #expect(groups[0].name == "GLOBAL")
     #expect(groups[0].nodes.map(\.name) == ["Hong Kong 01", "Tokyo 02"])
     #expect(groups[0].nodes.first { $0.name == "Tokyo 02" }?.isSelected == true)
-    #expect(groups[0].nodes.first { $0.name == "Hong Kong 01" }?.latency == nil)
+    #expect(groups[0].nodes.first { $0.name == "Hong Kong 01" }?.latency == 18)
+    #expect(groups[0].nodes.first { $0.name == "Tokyo 02" }?.latency == 43)
 }
 
 @MainActor
@@ -165,7 +166,7 @@ import Testing
     #expect(automatic.kind == .urlTest)
     #expect(automatic.testURL == "http://www.gstatic.com/generate_204")
     #expect(automatic.nodes.allSatisfy { !$0.isGroup })
-    #expect(automatic.nodes.allSatisfy { $0.latency == nil })
+    #expect(automatic.nodes.map(\.latency) == [18, 43])
 }
 
 @Test func proxySelectionResolverLocksAutomaticChildOnParentSelector() {
@@ -222,19 +223,60 @@ import Testing
     ) == ["GLOBAL", "Mutdot"])
 }
 
-@Test func latencyMeasurementUsesMedianSuccessfulHTTPRTT() {
-    #expect(LatencyMeasurement.median([261, 223, 246]) == 246)
-    #expect(LatencyMeasurement.median([180, nil, 220]) == 200)
-    #expect(LatencyMeasurement.median([nil, nil, nil]) == nil)
-}
-
 @Test func latencyRefreshPublishesUsefulProgressWhileTesting() {
     #expect(LatencyTestPlan.maximumConcurrentFallbackTests == 8)
-    #expect(LatencyTestPlan.attemptsPerProxy == 1)
-    #expect(LatencyTestPlan.defaultTestURL == "https://www.gstatic.com/generate_204")
+    #expect(LatencyTestPlan.defaultTestURL == "http://www.gstatic.com/generate_204")
     #expect(LatencyTestProgress(completed: 0, total: 24).text == "Testing 0/24")
     #expect(LatencyTestProgress(completed: 7, total: 24).text == "Testing 7/24")
     #expect(LatencyTestProgress(completed: 24, total: 24).fraction == 1)
+}
+
+@Test func failedGroupMeasurementsFallBackToMissingNodes() {
+    let test = LatencyGroupTest(
+        groupName: "Automatic",
+        url: "http://www.gstatic.com/generate_204",
+        nodeNames: ["Hong Kong 01", "Tokyo 02"]
+    )
+
+    #expect(
+        test.fallbackTests(excluding: ["Hong Kong 01"])
+            == [LatencyProxyTest(
+                proxyName: "Tokyo 02",
+                url: "http://www.gstatic.com/generate_204"
+            )]
+    )
+}
+
+@Test func mihomoAPIDecoderIgnoresFailedLatencyHistorySentinels() throws {
+    let data = """
+    {
+      "proxies": {
+        "GLOBAL": {"type":"Selector","now":"Tokyo 02","all":["Tokyo 02"]},
+        "Tokyo 02": {"type":"Trojan","history":[{"delay":43},{"delay":65535}]}
+      }
+    }
+    """.data(using: .utf8)!
+
+    let groups = try MihomoAPIDecoder.proxyGroups(from: data)
+
+    #expect(groups[0].nodes[0].latency == 43)
+}
+
+@Test func latencySettingsNormalizeURLAndTimeout() {
+    let settings = LatencyTestSettings(
+        testURL: " https://cp.cloudflare.com/generate_204 ",
+        timeoutMilliseconds: 2_500
+    )
+
+    #expect(settings.testURL == "https://cp.cloudflare.com/generate_204")
+    #expect(settings.timeoutMilliseconds == 2_500)
+    #expect(LatencyTestSettings(testURL: "", timeoutMilliseconds: 42).testURL == LatencyTestPlan.defaultTestURL)
+    #expect(
+        LatencyTestSettings(
+            testURL: "ftp://example.com/check",
+            timeoutMilliseconds: 90_000
+        ).timeoutMilliseconds == LatencyTestSettings.maximumTimeoutMilliseconds
+    )
 }
 
 @Test func latencyGroupDecoderBuildsNodeDelayMap() throws {
@@ -276,11 +318,19 @@ import Testing
         ),
     ]
 
-    let plan = LatencyTestPlanner.plan(groups: groups)
+    let plan = LatencyTestPlanner.plan(
+        groups: groups,
+        settings: LatencyTestSettings(
+            testURL: "https://cp.cloudflare.com/generate_204",
+            timeoutMilliseconds: 3_000
+        )
+    )
 
     #expect(plan.groupTests.map(\.groupName) == ["自动选择"])
+    #expect(plan.groupTests.first?.url == "http://www.gstatic.com/generate_204")
     #expect(plan.groupTests.first?.nodeNames == Set(["香港HK01", "日本JP01"]))
     #expect(plan.fallbackTests.map(\.proxyName) == ["美国US01"])
+    #expect(plan.fallbackTests.first?.url == "https://cp.cloudflare.com/generate_204")
     #expect(!plan.nodeNames.contains("DIRECT"))
     #expect(!plan.nodeNames.contains("REJECT"))
 }
@@ -318,6 +368,94 @@ import Testing
             groups: groups
         ) == LatencyTestPlan.defaultTestURL
     )
+}
+
+@MainActor
+@Test func appStoreDelayRefreshUsesConfiguredLatencyDefaults() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let sourceURL = directory.appendingPathComponent("config.yaml")
+    let executableURL = directory.appendingPathComponent("fake-mihomo")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try """
+    mixed-port: 7890
+    external-controller: 127.0.0.1:9090
+    proxies: []
+    rules:
+      - MATCH,DIRECT
+    """.write(to: sourceURL, atomically: true, encoding: .utf8)
+    try """
+    #!/bin/sh
+    if [ "$1" = "-t" ]; then
+      exit 0
+    fi
+    sleep 5
+    """.write(to: executableURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+    RecordingURLProtocol.reset()
+    RecordingURLProtocol.statusCode = { request in
+        request.url?.path == "/group/Automatic/delay" ? 504 : 200
+    }
+    RecordingURLProtocol.response = { request in
+        switch request.url?.path {
+        case "/version":
+            return Data(#"{"version":"test"}"#.utf8)
+        case "/proxies":
+            return Data("""
+            {
+              "proxies": {
+                "GLOBAL": {"type":"Selector","now":"Automatic","all":["Automatic"]},
+                "Automatic": {
+                  "type":"URLTest",
+                  "now":"Hong Kong 01",
+                  "all":["Hong Kong 01"],
+                  "testUrl":"https://cp.cloudflare.com/generate_204"
+                },
+                "Hong Kong 01": {"type":"Shadowsocks"}
+              }
+            }
+            """.utf8)
+        case "/group/Automatic/delay":
+            return Data(#"{"message":"get delay: all proxies timeout"}"#.utf8)
+        default:
+            return Data(#"{"delay":123}"#.utf8)
+        }
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [RecordingURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    let store = AppStore(
+        coreService: MihomoCoreService(coreBinaryURL: executableURL),
+        apiService: MihomoAPIService(
+            requestBuilder: MihomoAPIRequest(baseURL: URL(string: "http://127.0.0.1:9090")!),
+            session: session
+        ),
+        profileRepository: ManagedProfileRepository(rootURL: directory.appendingPathComponent("Managed")),
+        runtimeConfigurationPreparer: RuntimeConfigurationPreparer(
+            portAllocator: RuntimePortAllocator(
+                isTCPPortAvailable: { _, _ in true },
+                isUDPPortAvailable: { _, _ in true }
+            )
+        )
+    )
+    store.configPath = sourceURL.path
+    store.latencyTestURL = "https://cp.cloudflare.com/generate_204"
+    store.latencyTestTimeoutMilliseconds = 2_500
+
+    await store.refreshProxiesAndLatency()
+    await store.shutdownRuntime()
+
+    let delayURL = try #require(
+        RecordingURLProtocol.requestedURLs.first {
+            $0.absoluteString.contains("/proxies/Hong%20Kong%2001/delay")
+        }
+    )
+    let components = try #require(URLComponents(url: delayURL, resolvingAgainstBaseURL: false))
+    #expect(components.queryItems?.first { $0.name == "url" }?.value == "https://cp.cloudflare.com/generate_204")
+    #expect(components.queryItems?.first { $0.name == "timeout" }?.value == "2500")
+    #expect(store.proxyGroups.first { $0.name == "Automatic" }?.nodes.first?.latency == 123)
 }
 
 @Test func proxyGroupsCollapseIndependently() {
@@ -371,6 +509,70 @@ import Testing
     #expect(store.menuBarSelectedNodeName == "新加坡SG01")
 }
 
+@MainActor
+@Test func menuBarHeaderResolvesAutomaticGroupToConnectedServer() {
+    let store = AppStore()
+    store.proxyGroups = [
+        ProxyGroup(
+            name: "Mutdot",
+            policy: "Selector",
+            kind: .selector,
+            nodes: [
+                ProxyNode(
+                    name: "自动选择",
+                    region: "Proxy",
+                    latency: nil,
+                    isSelected: true,
+                    isGroup: true
+                ),
+                ProxyNode(name: "香港HK01", region: "HK", latency: 18, isSelected: false),
+                ProxyNode(name: "新加坡SG01", region: "SG", latency: 56, isSelected: false),
+            ]
+        ),
+        ProxyGroup(
+            name: "自动选择",
+            policy: "URLTest",
+            kind: .urlTest,
+            nodes: [
+                ProxyNode(name: "香港HK01", region: "HK", latency: 18, isSelected: false),
+                ProxyNode(name: "新加坡SG01", region: "SG", latency: 56, isSelected: true),
+            ]
+        ),
+    ]
+
+    #expect(store.menuBarSelectedNodeName == "新加坡SG01")
+    #expect(store.menuBarHeaderTitle == "新加坡SG01")
+    #expect(store.menuBarProxyNodes.first(where: { $0.name == "新加坡SG01" })?.isSelected == true)
+}
+
+@Test func selectedLeafResolverStopsAtCyclicProxyGroups() {
+    let groups = [
+        ProxyGroup(
+            name: "A",
+            policy: "Selector",
+            kind: .selector,
+            nodes: [
+                ProxyNode(name: "B", region: "Proxy", latency: nil, isSelected: true, isGroup: true),
+            ]
+        ),
+        ProxyGroup(
+            name: "B",
+            policy: "Selector",
+            kind: .selector,
+            nodes: [
+                ProxyNode(name: "A", region: "Proxy", latency: nil, isSelected: true, isGroup: true),
+            ]
+        ),
+    ]
+
+    #expect(
+        ProxySelectionResolver.selectedLeafNodeName(
+            selectedGroupName: "A",
+            groups: groups
+        ) == nil
+    )
+}
+
 @Test func menuBarPanelUsesOneMainSwitchAndFitsItsWindow() {
     #expect(MenuBarQuickAccessPolicy.visibleConnectionControlCount == 1)
     #expect(!MenuBarQuickAccessPolicy.showsSystemProxyToggle)
@@ -385,25 +587,9 @@ import Testing
     #expect(MenuBarPanelMotion.usesCustomWindowAnimator)
     #expect(!MenuBarPanelMotion.usesCustomContentFade)
     #expect(MenuBarPanelMotion.startsWindowTransparent)
+    #expect(MenuBarPanelMotion.respectsReducedMotion)
     #expect(MenuBarPanelMotion.fadeInDuration >= 0.28)
     #expect(MenuBarPanelMotion.fadeOutDuration >= 0.20)
-}
-
-@Test func interfaceUsesConsistentTitleCaseForMultiwordLabels() {
-    #expect(InterfaceCopy.vpn == "VPN")
-    #expect(InterfaceCopy.systemProxy == "System Proxy")
-    #expect(InterfaceCopy.networkSpeed == "Network Speed")
-    #expect(InterfaceCopy.networkDetection == "Network Detection")
-    #expect(InterfaceCopy.outboundMode == "Outbound Mode")
-    #expect(InterfaceCopy.trafficUsage == "Traffic Usage")
-    #expect(InterfaceCopy.intranetIP == "Intranet IP")
-    #expect(
-        InterfaceCopy.multiwordTitles.allSatisfy { title in
-            title.split(separator: " ").allSatisfy { word in
-                word.first?.isUppercase == true || word.allSatisfy { $0.isNumber }
-            }
-        }
-    )
 }
 
 @Test func mihomoAPIDecoderBuildsConnectionRowsFromMihomoResponse() throws {
@@ -563,6 +749,48 @@ private func testProxyGroup() -> ProxyGroup {
             ProxyNode(name: "Tokyo 02", region: "JP", latency: 43, isSelected: false),
         ]
     )
+}
+
+private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var requestedURLs: [URL] = []
+    nonisolated(unsafe) static var response: ((URLRequest) throws -> Data)?
+    nonisolated(unsafe) static var statusCode: ((URLRequest) -> Int)?
+
+    static func reset() {
+        requestedURLs = []
+        response = nil
+        statusCode = nil
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        if let url = request.url {
+            Self.requestedURLs.append(url)
+        }
+        do {
+            let data = try Self.response?(request) ?? Data()
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: Self.statusCode?(request) ?? 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 @Test func proxyRegionDecoderRecognizesChineseNodeNames() {

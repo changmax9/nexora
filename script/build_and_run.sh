@@ -3,10 +3,20 @@ set -euo pipefail
 
 MODE="${1:-run}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
-APP_NAME="ClashGlass"
-BUNDLE_ID="com.maxchang.ClashGlass"
+APP_NAME="Nexora"
+BUNDLE_ID="com.maxchang.Nexora"
 MIN_SYSTEM_VERSION="15.0"
 APP_VERSION="${APP_VERSION:-0.1.0}"
+SPARKLE_ENABLE_AUTOMATIC_CHECKS="${SPARKLE_ENABLE_AUTOMATIC_CHECKS:-false}"
+
+case "$SPARKLE_ENABLE_AUTOMATIC_CHECKS" in
+  true|false)
+    ;;
+  *)
+    echo "error: SPARKLE_ENABLE_AUTOMATIC_CHECKS must be true or false" >&2
+    exit 2
+    ;;
+esac
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -22,7 +32,7 @@ GEO_DATA_SOURCE="$ROOT_DIR/runtime-assets"
 GEO_DATA_DESTINATION="$APP_RESOURCES/GeoData"
 APP_ICON_SOURCE="$ROOT_DIR/Assets/AppIcon.icns"
 SPARKLE_FRAMEWORK="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
-SPARKLE_FEED_URL="https://github.com/changmax9/clash-glass/releases/latest/download/appcast.xml"
+SPARKLE_FEED_URL="https://github.com/changmax9/nexora/releases/latest/download/appcast.xml"
 SPARKLE_PUBLIC_KEY="nNIrqbotaDGgjLrL4Rhx42PoCFiqj04ktB+FidHXvF8="
 
 if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
@@ -78,9 +88,9 @@ cat >"$INFO_PLIST" <<PLIST
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
-  <string>Clash Glass</string>
+  <string>Nexora</string>
   <key>CFBundleDisplayName</key>
-  <string>Clash Glass</string>
+  <string>Nexora</string>
   <key>CFBundleShortVersionString</key>
   <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
@@ -102,7 +112,7 @@ cat >"$INFO_PLIST" <<PLIST
   <key>SUPublicEDKey</key>
   <string>$SPARKLE_PUBLIC_KEY</string>
   <key>SUEnableAutomaticChecks</key>
-  <true/>
+  <$SPARKLE_ENABLE_AUTOMATIC_CHECKS/>
   <key>SUAllowsAutomaticUpdates</key>
   <false/>
   <key>SUScheduledCheckInterval</key>

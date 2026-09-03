@@ -1,6 +1,6 @@
 # Third-party notices
 
-Clash Glass can download and run the following upstream components during
+Nexora can download and run the following upstream components during
 local development. They are not stored in this source repository.
 
 ## Mihomo

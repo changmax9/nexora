@@ -3,13 +3,15 @@ import SwiftUI
 public struct MenuBarPanelView: View {
     @Bindable private var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public init(store: AppStore) {
         self.store = store
     }
 
     public var body: some View {
-        let palette = GlassPalette(colorScheme: colorScheme)
+        let accent = store.accent.color(for: colorScheme)
+        let palette = GlassPalette(colorScheme: colorScheme, accent: accent)
         VStack(alignment: .leading, spacing: MenuBarQuickAccessPolicy.sectionSpacing) {
             header(palette: palette)
             mainControlSection
@@ -23,6 +25,15 @@ public struct MenuBarPanelView: View {
         )
         .background(palette.background.opacity(0.88))
         .clipped()
+        .tint(accent)
+        .accentColor(accent)
+        .environment(
+            \.clashGlassReduceMotion,
+            AppMotionPolicy.reducesMotion(
+                systemPreference: accessibilityReduceMotion,
+                appPreference: store.reduceMotion
+            )
+        )
         .task {
             if !store.isCoreRunning {
                 await store.refreshProxies()
@@ -32,7 +43,8 @@ public struct MenuBarPanelView: View {
     }
 
     private func header(palette: GlassPalette) -> some View {
-        MenuBarPanelSurface(radius: 18, padding: 12) {
+        let serverName = store.menuBarHeaderTitle
+        return MenuBarPanelSurface(radius: 18, padding: 12) {
             HStack(spacing: 12) {
                 Text(NetworkIdentity(
                     ip: "",
@@ -42,8 +54,13 @@ public struct MenuBarPanelView: View {
                 .font(.system(size: 24))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Clash Glass")
+                    Text(serverName)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .minimumScaleFactor(0.82)
+                        .layoutPriority(1)
+                        .help(serverName)
                     Text(store.externalIP)
                         .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundStyle(palette.secondaryText)
@@ -76,7 +93,7 @@ public struct MenuBarPanelView: View {
     private var mainControlSection: some View {
         MenuBarPanelSurface(radius: 18, padding: 12) {
             MenuBarToggleRow(
-                title: InterfaceCopy.vpn,
+                title: "VPN",
                 detail: mainVPNDetail,
                 symbol: "shield.lefthalf.filled",
                 isOn: store.isStarted
@@ -221,8 +238,7 @@ private struct MenuBarToggleRow: View {
             Spacer()
 
             LiquidToggle(isOn: isOn, action: action)
-                .scaleEffect(0.82)
-                .frame(width: 46, height: 28)
+                .frame(width: 52, height: 40)
         }
     }
 }
@@ -231,12 +247,20 @@ private struct MenuBarProxyRow: View {
     let node: ProxyNode
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
         Button(action: action) {
             HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(palette.rose)
+                    .frame(width: 14)
+                    .opacity(node.isSelected ? 1 : 0)
+                    .accessibilityHidden(!node.isSelected)
+
                 Text(node.name)
                     .font(.system(size: 12, weight: node.isSelected ? .bold : .semibold, design: .rounded))
                     .lineLimit(1)
@@ -262,9 +286,16 @@ private struct MenuBarProxyRow: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .help(node.name)
         .onHover { isHovering = $0 }
-        .animation(.spring(response: 0.22, dampingFraction: 0.78), value: isHovering)
-        .animation(.spring(response: 0.24, dampingFraction: 0.80), value: node.isSelected)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.78),
+            value: isHovering
+        )
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.80),
+            value: node.isSelected
+        )
     }
 
     private func latencyColor(palette: GlassPalette) -> Color {

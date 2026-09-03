@@ -5,30 +5,66 @@ import Testing
 @Test func primaryApplicationSectionsStayInOrder() {
     #expect(AppSection.allCases.map(\.title) == [
         "Dashboard",
+        "Diagnostics",
         "Proxies",
         "Routing",
         "Profiles",
-        "Requests",
         "Connections",
-        "Resources",
-        "Logs",
         "Settings",
     ])
 }
 
-@Test func settingsUsesOnePageWithOnlyRequestedGroups() {
-    #expect(SettingsPagePolicy.usesSinglePage)
-    #expect(!SettingsPagePolicy.showsSectionTabs)
-    #expect(SettingsPagePolicy.groups == [
-        .appearance,
-        .language,
-        .about,
-    ])
+@Test func diagnosticsHasItsOwnPrimaryRailEntry() {
+    #expect(AppSection.diagnostics.symbol == "stethoscope")
+    #expect(RailSelectionResolver.item(for: .diagnostics) == .section(.diagnostics))
+}
+
+@Test func settingsKeepsRequiredLegalNotice() {
     #expect(ApplicationDisclaimer.purpose.contains("educational"))
     #expect(ApplicationDisclaimer.purpose.contains("research"))
     #expect(ApplicationDisclaimer.responsibility.contains("applicable laws"))
     #expect(ApplicationDisclaimer.liability.contains("provided \"as is\""))
     #expect(ApplicationDisclaimer.liability.contains("not liable"))
+}
+
+@MainActor
+@Test func appStorePersistsLatencyTestSettings() throws {
+    let suiteName = "ClashGlassTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let rootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let store = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: rootURL),
+        userDefaults: defaults
+    )
+    store.latencyTestURL = " https://cp.cloudflare.com/generate_204 "
+    store.latencyTestTimeoutMilliseconds = 2_500
+    store.reduceMotion = true
+    store.accent = .cobalt
+
+    let restored = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: rootURL),
+        userDefaults: defaults
+    )
+    #expect(restored.latencyTestURL == "https://cp.cloudflare.com/generate_204")
+    #expect(restored.latencyTestTimeoutMilliseconds == 2_500)
+    #expect(restored.reduceMotion)
+    #expect(restored.accent == .cobalt)
+}
+
+@Test func decorativeAccentOptionsReserveTrafficLightColorsForStatus() {
+    #expect(NexoraAccent.allCases.count == 11)
+    #expect(NexoraAccent.allCases.first == .terracotta)
+    let reservedNames = ["mint", "green", "red", "orange"]
+    #expect(
+        NexoraAccent.allCases.allSatisfy { accent in
+            reservedNames.allSatisfy { !accent.rawValue.contains($0) }
+        }
+    )
 }
 
 @Test func appSupportsRequestedInterfaceLanguages() {
@@ -67,7 +103,7 @@ import Testing
     #expect(AppLanguage.portuguese.text(.settings) == "Definições")
 }
 
-@Test func localizedDynamicInterfaceCopyCoversProxyRoutingAndAboutSurfaces() {
+@Test func localizedInterfaceTextCoversProxyRoutingAndAboutSurfaces() {
     let simplified = AppLanguage.simplifiedChinese
     let traditional = AppLanguage.traditionalChinese
     let japanese = AppLanguage.japanese
@@ -102,17 +138,6 @@ import Testing
     #expect(!ProfileHealthFilter.valid.matches(invalid))
 }
 
-@Test func logLevelFilterMatchesCommonMihomoLevels() {
-    #expect(LogLevelFilter.all.matches("info"))
-    #expect(LogLevelFilter.errors.matches("error"))
-    #expect(LogLevelFilter.errors.matches("fatal"))
-    #expect(!LogLevelFilter.errors.matches("warning"))
-    #expect(LogLevelFilter.warnings.matches("warn"))
-    #expect(LogLevelFilter.warnings.matches("warning"))
-    #expect(LogLevelFilter.info.matches("Info"))
-    #expect(LogLevelFilter.debug.matches("debug"))
-}
-
 @Test func proxyNodeFilterFindsSelectedUntestedAndSlowNodes() {
     let selected = ProxyNode(name: "Japan", region: "JP", latency: 80, isSelected: true)
     let untested = ProxyNode(name: "Singapore", region: "SG", latency: nil, isSelected: false)
@@ -126,6 +151,250 @@ import Testing
     #expect(!ProxyNodeFilter.untested.matches(group))
     #expect(ProxyNodeFilter.slow.matches(slow))
     #expect(!ProxyNodeFilter.slow.matches(selected))
+}
+
+@Test func networkDiagnosticReportExplainsSystemTunnelEgress() {
+    let report = NetworkDiagnosticEngine.report(
+        snapshot: NetworkDiagnosticSnapshot(
+            isStarted: false,
+            isSystemProxyEnabled: true,
+            isTunEnabled: false,
+            activeSystemTunnel: true,
+            egressKind: .systemTunnel,
+            externalIP: "151.242.36.41",
+            countryCode: "JP",
+            countryName: "Japan",
+            intranetIP: "192.168.1.65",
+            httpPort: 7890,
+            socksPort: 7891,
+            selectedMode: .rule,
+            selectedProfile: "Mutdot"
+        )
+    )
+
+    #expect(report.severity == .warning)
+    #expect(report.summary.contains("System tunnel"))
+    #expect(report.findings.contains { $0.title.contains("utun") })
+    #expect(report.suggestedAction == "Turn off the other VPN/TUN, then refresh.")
+    #expect(report.copyText.contains("151.242.36.41"))
+    #expect(report.copyText.contains("System tunnel"))
+}
+
+@Test func networkDiagnosticReportNamesSystemTunnelWhenStartedRuntimeFallsBackToTunnel() {
+    let report = NetworkDiagnosticEngine.report(
+        snapshot: NetworkDiagnosticSnapshot(
+            isStarted: true,
+            isSystemProxyEnabled: true,
+            isTunEnabled: true,
+            activeSystemTunnel: true,
+            egressKind: .systemTunnel,
+            externalIP: "151.242.36.41",
+            countryCode: "JP",
+            countryName: "Japan",
+            intranetIP: "192.168.1.65",
+            httpPort: 7890,
+            socksPort: 7891,
+            selectedMode: .rule,
+            selectedProfile: "Mutdot"
+        )
+    )
+
+    #expect(report.severity == .warning)
+    #expect(report.summary.contains("System tunnel"))
+    #expect(report.suggestedAction == "Turn off the other VPN/TUN, then refresh.")
+    #expect(!report.summary.localizedCaseInsensitiveContains("direct egress"))
+    #expect(!report.copyText.localizedCaseInsensitiveContains("direct egress"))
+}
+
+@Test func networkDiagnosticReportHighlightsDNSAndEndpointFailures() {
+    let report = NetworkDiagnosticEngine.report(
+        snapshot: NetworkDiagnosticSnapshot(
+            isStarted: true,
+            isSystemProxyEnabled: true,
+            isTunEnabled: true,
+            activeSystemTunnel: false,
+            egressKind: .proxy,
+            externalIP: "203.0.113.10",
+            countryCode: "US",
+            countryName: "United States",
+            intranetIP: "192.168.1.65",
+            httpPort: 7890,
+            socksPort: 7891,
+            selectedMode: .rule,
+            selectedProfile: "Mutdot",
+            dnsChecks: [
+                NetworkDNSCheck(
+                    host: "api4.ipify.org",
+                    addresses: [],
+                    errorMessage: "nodename nor servname provided"
+                ),
+            ],
+            endpointChecks: [
+                NetworkEndpointCheck(
+                    name: "ipwho.is",
+                    url: URL(string: "https://ipwho.is/")!,
+                    isReachable: false,
+                    statusCode: nil,
+                    latencyMilliseconds: nil,
+                    errorMessage: "timed out"
+                ),
+            ]
+        )
+    )
+
+    #expect(report.severity == .critical)
+    #expect(report.findings.contains { $0.title == "DNS resolution" })
+    #expect(report.findings.contains { $0.title == "External probes" })
+    #expect(report.copyText.contains("api4.ipify.org"))
+    #expect(report.copyText.contains("ipwho.is"))
+}
+
+@Test func networkDiagnosticCopiedReportIncludesProbeEvidenceSections() {
+    let report = NetworkDiagnosticEngine.report(
+        snapshot: NetworkDiagnosticSnapshot(
+            isStarted: true,
+            isSystemProxyEnabled: true,
+            isTunEnabled: false,
+            activeSystemTunnel: false,
+            egressKind: .proxy,
+            externalIP: "203.0.113.10",
+            countryCode: "US",
+            countryName: "United States",
+            intranetIP: "192.168.1.65",
+            httpPort: 7890,
+            socksPort: 7891,
+            selectedMode: .rule,
+            selectedProfile: "Mutdot",
+            portChecks: [
+                NetworkPortCheck(
+                    label: "HTTP Proxy",
+                    port: 7890,
+                    isListening: true,
+                    ownerName: "ClashGlass",
+                    ownerPID: 42
+                ),
+                NetworkPortCheck(label: "Socks Proxy", port: 7891, isListening: false),
+            ],
+            dnsChecks: [
+                NetworkDNSCheck(host: "github.com", addresses: ["140.82.112.4"]),
+                NetworkDNSCheck(host: "api4.ipify.org", addresses: [], errorMessage: "lookup failed"),
+            ],
+            endpointChecks: [
+                NetworkEndpointCheck(
+                    name: "ipwho.is",
+                    url: URL(string: "https://ipwho.is/")!,
+                    isReachable: true,
+                    statusCode: 200,
+                    latencyMilliseconds: 124,
+                    errorMessage: nil
+                ),
+                NetworkEndpointCheck(
+                    name: "api4.ipify",
+                    url: URL(string: "https://api4.ipify.org?format=json")!,
+                    isReachable: false,
+                    statusCode: nil,
+                    latencyMilliseconds: nil,
+                    errorMessage: "timed out"
+                ),
+            ]
+        )
+    )
+
+    #expect(report.copyText.contains("Route: profile=Mutdot, mode=Rule, egress=proxy"))
+    #expect(report.copyText.contains("Ports:"))
+    #expect(report.copyText.contains("- HTTP Proxy :7890 listening ClashGlass pid 42"))
+    #expect(report.copyText.contains("- Socks Proxy :7891 not listening"))
+    #expect(report.copyText.contains("DNS:"))
+    #expect(report.copyText.contains("- github.com 140.82.112.4"))
+    #expect(report.copyText.contains("- api4.ipify.org failed lookup failed"))
+    #expect(report.copyText.contains("Endpoints:"))
+    #expect(report.copyText.contains("- ipwho.is HTTP 200 124 ms"))
+    #expect(report.copyText.contains("- api4.ipify failed timed out"))
+}
+
+@Test func networkDiagnosticBriefHighlightsTheFirstBlockingLayer() {
+    let report = NetworkDiagnosticEngine.report(
+        snapshot: NetworkDiagnosticSnapshot(
+            isStarted: true,
+            isSystemProxyEnabled: true,
+            isTunEnabled: true,
+            activeSystemTunnel: false,
+            egressKind: .proxy,
+            externalIP: "203.0.113.10",
+            countryCode: "US",
+            countryName: "United States",
+            intranetIP: "192.168.1.65",
+            httpPort: 7890,
+            socksPort: 7891,
+            selectedMode: .rule,
+            selectedProfile: "Mutdot",
+            dnsChecks: [
+                NetworkDNSCheck(
+                    host: "api4.ipify.org",
+                    addresses: [],
+                    errorMessage: "nodename nor servname provided"
+                ),
+            ]
+        )
+    )
+
+    let brief = NetworkDiagnosticBrief.make(
+        report: report,
+        totalChecks: 8,
+        egressTitle: "Proxy Egress",
+        profileTitle: "Mutdot"
+    )
+
+    #expect(brief.headline == "Blocking layer detected")
+    #expect(brief.detail.contains("DNS resolution"))
+    #expect(brief.detail.contains("8 checks"))
+    #expect(brief.metrics.map(\.value) == ["8", "Proxy Egress", "Mutdot"])
+}
+
+@Test func networkDiagnosticBriefLocalizesToolbarAndProtectsLongExitNames() {
+    let brief = NetworkDiagnosticBrief.make(
+        report: .placeholder,
+        totalChecks: 0,
+        egressTitle: AppLanguage.russian.text(.systemTunnelEgress),
+        profileTitle: "Mutdot",
+        language: .russian
+    )
+
+    #expect(brief.headline == "Готово к диагностике")
+    #expect(brief.detail == "Диагностика сети · 0")
+    #expect(brief.metrics.map(\.title) == ["Проверки", "Выход", "Профиль"])
+    #expect(
+        DiagnosticsToolbarLayoutMetrics.exitWidth
+            > DiagnosticsToolbarLayoutMetrics.checksWidth
+    )
+    #expect(
+        DiagnosticsToolbarLayoutMetrics.width(for: "globe")
+            == DiagnosticsToolbarLayoutMetrics.exitWidth
+    )
+}
+
+@Test func networkDiagnosticReportDoesNotClaimProxyEgressAfterDirectFallback() {
+    let report = NetworkDiagnosticEngine.report(
+        snapshot: NetworkDiagnosticSnapshot(
+            isStarted: true,
+            isSystemProxyEnabled: true,
+            isTunEnabled: false,
+            activeSystemTunnel: false,
+            egressKind: .direct,
+            externalIP: "203.0.113.8",
+            countryCode: "US",
+            countryName: "United States",
+            intranetIP: "192.168.1.65",
+            httpPort: 7890,
+            socksPort: 7891,
+            selectedMode: .rule,
+            selectedProfile: "Mutdot"
+        )
+    )
+
+    #expect(report.summary.contains("direct"))
+    #expect(!report.summary.contains("proxy egress is active"))
+    #expect(!report.copyText.contains("showing the proxy egress"))
 }
 
 @Test func systemAppearanceResolvesFromTheLiveMacOSScheme() {
@@ -184,13 +453,11 @@ import Testing
     #expect(store.selectedProfile == "No Profile")
     #expect(store.proxyGroups.isEmpty)
     #expect(store.connections.isEmpty)
-    #expect(store.logs.isEmpty)
 }
 
 @Test func settingsReplacesToolsInThePrimaryRail() {
     #expect(AppSection.settings.symbol == "wrench.and.screwdriver.fill")
     #expect(RailSelectionResolver.item(for: .settings) == .section(.settings))
-    #expect(RailSelectionResolver.item(for: .logs) == .section(.settings))
 }
 
 @Test func coreStatusPresentationDistinguishesControllerOnlyFromStopped() {
@@ -216,43 +483,25 @@ import Testing
     #expect(ToolbarControlMetrics.visibleSize == 34)
     #expect(ToolbarControlMetrics.hitTarget == 40)
     #expect(ToolbarControlAppearancePolicy.controlCornerRadius == 11)
+    #expect(MainStageLayoutMetrics.toolbarHeight == ToolbarControlMetrics.hitTarget)
+    #expect(MainStageLayoutMetrics.toolbarToContentSpacing == 24)
+    #expect(MainStageLayoutMetrics.contentHeightDeduction == 64)
+    #expect(!MainStageLayoutMetrics.runtimeControlOverlaysContent)
+    #expect(MainStageLayoutMetrics.contentHeight(stageHeight: 720) == 656)
 }
 
-@Test func pageNavigationUsesOneSharedFadeTransition() {
-    #expect(PageNavigationTransitionPolicy.appliesToEverySectionChange)
-    #expect(PageNavigationTransitionPolicy.usesOpacityTransition)
+@Test func pageNavigationKeepsHeavyFeatureContentStable() {
+    #expect(PageNavigationTransitionPolicy.animatesTitleChange)
+    #expect(!PageNavigationTransitionPolicy.crossfadesFeatureContent)
     #expect(PageNavigationTransitionPolicy.respectsReducedMotion)
-    #expect(PageNavigationTransitionPolicy.duration == 0.20)
+    #expect(PageNavigationTransitionPolicy.duration == 0.16)
 }
 
-@Test func proxiesToolbarKeepsOnlyOneRefreshAndLatencyEntryPoint() {
-    #expect(ProxiesToolbarPolicy.refreshIncludesLatencyTesting)
-    #expect(!ProxiesToolbarPolicy.showsSeparateDelayTestAction)
-    #expect(ProxiesToolbarPolicy.actionTitles == [
-        "Refresh",
-        "Providers",
-        "Settings",
-    ])
-}
-
-@MainActor
-@Test func dashboardControlsUpdateRuntimeState() {
-    let store = AppStore()
-
-    #expect(store.isStarted == false)
-    store.toggleStarted()
-    #expect(store.isStarted == true)
-
-    let initialSystemProxyState = store.isSystemProxyEnabled
-    store.toggleSystemProxy()
-    #expect(store.isSystemProxyEnabled == !initialSystemProxyState)
-
-    let initialTunState = store.isTunEnabled
-    store.toggleTun()
-    #expect(store.isTunEnabled == !initialTunState)
-
-    store.selectOutboundMode(.global)
-    #expect(store.selectedMode == .global)
+@Test func appMotionPolicyCombinesSystemAndAppPreferences() {
+    #expect(!AppMotionPolicy.reducesMotion(systemPreference: false, appPreference: false))
+    #expect(AppMotionPolicy.reducesMotion(systemPreference: true, appPreference: false))
+    #expect(AppMotionPolicy.reducesMotion(systemPreference: false, appPreference: true))
+    #expect(AppMotionPolicy.reducesMotion(systemPreference: true, appPreference: true))
 }
 
 @Test func liquidControlMotionUsesStableHoverAndPressScales() {
@@ -396,29 +645,10 @@ import Testing
     #expect(RailSelectionMotion.respectsReducedMotion)
 
     #expect(RailSelectionResolver.item(for: .dashboard) == .section(.dashboard))
-    #expect(RailSelectionResolver.item(for: .resources) == .section(.proxies))
-    #expect(RailSelectionResolver.item(for: .logs) == .section(.settings))
+    #expect(RailSelectionResolver.item(for: .proxies) == .section(.proxies))
     #expect(RailSelectionResolver.item(for: .routing) == .section(.routing))
     #expect(RailSelectionResolver.item(for: .profiles) == .section(.profiles))
     #expect(RailSelectionResolver.item(for: .settings) == .section(.settings))
-}
-
-@Test func secondaryPagesKeepTheirParentRailItemSelected() {
-    let resourcesPresentation = RailItemPresentation(
-        item: .section(.proxies),
-        selectedSection: .resources,
-        hoveredItem: nil,
-        reduceMotion: false
-    )
-    let logsPresentation = RailItemPresentation(
-        item: .section(.settings),
-        selectedSection: .logs,
-        hoveredItem: nil,
-        reduceMotion: false
-    )
-
-    #expect(resourcesPresentation.showsSelectionBackground)
-    #expect(logsPresentation.showsSelectionBackground)
 }
 
 @Test func railUsesTheWindowBackgroundAndDrawsAboveTheMainStage() {

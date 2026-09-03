@@ -29,10 +29,6 @@ public enum DashboardTopRowLayoutMetrics {
     ).upperHeight
 }
 
-public enum DashboardCardContentPolicy {
-    public static let networkDetectionShowsInformationIcon = false
-}
-
 public enum OutboundModeLayoutMetrics {
     public static let cardHeight = DashboardRowMetrics.standardTotalHeight
     public static let cardPadding: Double = 14
@@ -51,11 +47,6 @@ public enum OutboundModeLayoutMetrics {
     }
 
     public static let minimumHeight = requiredContentHeight
-}
-
-public enum DashboardLowerRowLayoutMetrics {
-    public static let usesTopAnchoredCells = true
-    public static let columnCount = 3
 }
 
 public struct DashboardLayoutMetrics: Sendable {

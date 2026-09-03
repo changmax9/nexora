@@ -176,6 +176,8 @@ public struct RuntimeConfigurationPreparer: Sendable {
         var lines = yaml.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var foundMixedPort = false
         var foundController = false
+        var foundUnifiedDelay = false
+        var foundTCPConcurrent = false
         var insideDNS = false
 
         for index in lines.indices {
@@ -191,6 +193,12 @@ public struct RuntimeConfigurationPreparer: Sendable {
                 } else if trimmed.hasPrefix("external-controller:") {
                     lines[index] = "external-controller: '127.0.0.1:\(controllerPort)'"
                     foundController = true
+                } else if trimmed.hasPrefix("unified-delay:") {
+                    lines[index] = "unified-delay: true"
+                    foundUnifiedDelay = true
+                } else if trimmed.hasPrefix("tcp-concurrent:") {
+                    lines[index] = "tcp-concurrent: true"
+                    foundTCPConcurrent = true
                 }
             } else if insideDNS,
                       let dnsListenPort,
@@ -206,6 +214,14 @@ public struct RuntimeConfigurationPreparer: Sendable {
         if !foundController {
             lines.insert("external-controller: '127.0.0.1:\(controllerPort)'", at: min(1, lines.count))
         }
+        var performanceSettings: [String] = []
+        if !foundUnifiedDelay {
+            performanceSettings.append("unified-delay: true")
+        }
+        if !foundTCPConcurrent {
+            performanceSettings.append("tcp-concurrent: true")
+        }
+        lines.insert(contentsOf: performanceSettings, at: 0)
         insertRoutingOverrides(
             routingOverrides,
             vpnRuleTarget: vpnRuleTarget,
@@ -267,7 +283,7 @@ public struct RuntimeConfigurationPreparer: Sendable {
         indentation: String
     ) -> [String] {
         [
-            "\(indentation)# Clash Glass routing overrides",
+            "\(indentation)# Nexora routing overrides",
         ] + overrides
             .sorted { $0.domain < $1.domain }
             .compactMap { routingOverride in
@@ -327,7 +343,7 @@ public enum RuntimeConfigurationError: Error, LocalizedError, Equatable {
         case let .noAvailablePort(preferredPort):
             "No free local port was found near \(preferredPort)."
         case .geoDataMissing:
-            "Clash Glass is missing the GeoIP and GeoSite runtime data."
+            "Nexora is missing the GeoIP and GeoSite runtime data."
         case .missingVPNPolicyGroup:
             "This profile has no selectable proxy group for VPN routing rules."
         }
