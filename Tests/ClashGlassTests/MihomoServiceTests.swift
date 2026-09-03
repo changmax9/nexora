@@ -377,7 +377,11 @@ import Testing
     defer { try? FileManager.default.removeItem(at: directory) }
     let sourceURL = directory.appendingPathComponent("config.yaml")
     let executableURL = directory.appendingPathComponent("fake-mihomo")
+    let geoDataURL = directory.appendingPathComponent("GeoData", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: geoDataURL, withIntermediateDirectories: true)
+    try Data("geoip fixture".utf8).write(to: geoDataURL.appendingPathComponent("geoip.dat"))
+    try Data("geosite fixture".utf8).write(to: geoDataURL.appendingPathComponent("geosite.dat"))
     try """
     mixed-port: 7890
     external-controller: 127.0.0.1:9090
@@ -407,6 +411,7 @@ import Testing
         ),
         profileRepository: ManagedProfileRepository(rootURL: directory.appendingPathComponent("Managed")),
         runtimeConfigurationPreparer: RuntimeConfigurationPreparer(
+            geoDataSourceURL: geoDataURL,
             portAllocator: RuntimePortAllocator(
                 isTCPPortAvailable: { _, _ in true },
                 isUDPPortAvailable: { _, _ in true }
@@ -427,7 +432,7 @@ import Testing
     let requestTrace = RecordingURLProtocol.observedRequests.joined(separator: " | ")
     #expect(
         measuredLatency == 123,
-        "Expected configured latency request to return 123 ms. Requests: \(requestTrace)"
+        "Expected 123 ms. Last error: \(store.lastErrorMessage ?? "<none>"). Requests: \(requestTrace)"
     )
 }
 
