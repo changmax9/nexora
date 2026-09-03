@@ -420,7 +420,15 @@ import Testing
     await store.refreshProxiesAndLatency()
     await store.shutdownRuntime()
 
-    #expect(store.proxyGroups.first { $0.name == "Automatic" }?.nodes.first?.latency == 123)
+    let measuredLatency = store.proxyGroups
+        .first { $0.name == "Automatic" }?
+        .nodes.first?
+        .latency
+    let requestTrace = RecordingURLProtocol.observedRequests.joined(separator: " | ")
+    #expect(
+        measuredLatency == 123,
+        "Expected configured latency request to return 123 ms. Requests: \(requestTrace)"
+    )
 }
 
 @Test func proxyGroupsCollapseIndependently() {
@@ -729,16 +737,23 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
 
     private static let stateLock = NSLock()
     nonisolated(unsafe) private static var fixtureStorage = Fixture.empty
+    nonisolated(unsafe) private static var observedRequestStorage: [String] = []
+
+    static var observedRequests: [String] {
+        withStateLock { observedRequestStorage }
+    }
 
     static func useConfiguredLatencyDefaultsFixture() {
         withStateLock {
             fixtureStorage = .configuredLatencyDefaults
+            observedRequestStorage = []
         }
     }
 
     static func reset() {
         withStateLock {
             fixtureStorage = .empty
+            observedRequestStorage = []
         }
     }
 
@@ -756,6 +771,7 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
 
+        Self.record(request)
         let stub = Self.stubResponse(for: request)
         guard let response = HTTPURLResponse(
             url: url,
@@ -774,6 +790,12 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 
+    private static func record(_ request: URLRequest) {
+        withStateLock {
+            observedRequestStorage.append(request.url?.absoluteString ?? "<missing URL>")
+        }
+    }
+
     private static func stubResponse(for request: URLRequest) -> StubResponse {
         let fixture = withStateLock { fixtureStorage }
         switch fixture {
@@ -785,13 +807,20 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     private static func configuredLatencyDefaultsResponse(for request: URLRequest) -> StubResponse {
-        switch request.url?.path {
-        case "/version":
+        guard let url = request.url else {
+            return StubResponse(statusCode: 400, data: Data())
+        }
+        let pathComponents = url.pathComponents
+            .map { $0.removingPercentEncoding ?? $0 }
+            .filter { $0 != "/" }
+
+        switch pathComponents.last {
+        case "version":
             return StubResponse(
                 statusCode: 200,
                 data: Data(#"{"version":"test"}"#.utf8)
             )
-        case "/proxies":
+        case "proxies":
             return StubResponse(
                 statusCode: 200,
                 data: Data("""
@@ -809,26 +838,29 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
                 }
                 """.utf8)
             )
-        case "/group/Automatic/delay":
-            return StubResponse(
-                statusCode: 504,
-                data: Data(#"{"message":"get delay: all proxies timeout"}"#.utf8)
-            )
-        case let path? where path.hasPrefix("/proxies/") && path.hasSuffix("/delay"):
-            let queryItems = request.url.flatMap {
-                URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems
-            } ?? []
+        default:
+            let queryItems = URLComponents(
+                url: url,
+                resolvingAgainstBaseURL: false
+            )?.queryItems ?? []
             let query = Dictionary(
                 uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") }
             )
+            guard query["url"] != nil || query["timeout"] != nil else {
+                return StubResponse(statusCode: 404, data: Data())
+            }
+            if pathComponents.contains("group") {
+                return StubResponse(
+                    statusCode: 504,
+                    data: Data(#"{"message":"get delay: all proxies timeout"}"#.utf8)
+                )
+            }
             let receivedConfiguredDefaults = query["url"] == "https://cp.cloudflare.com/generate_204"
                 && query["timeout"] == "2500"
             return StubResponse(
-                statusCode: 200,
+                statusCode: receivedConfiguredDefaults ? 200 : 400,
                 data: Data("{\"delay\":\(receivedConfiguredDefaults ? 123 : 1)}".utf8)
             )
-        default:
-            return StubResponse(statusCode: 200, data: Data())
         }
     }
 
