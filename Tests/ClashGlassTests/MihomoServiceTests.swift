@@ -394,35 +394,8 @@ import Testing
     """.write(to: executableURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
 
-    RecordingURLProtocol.reset()
-    RecordingURLProtocol.statusCode = { request in
-        request.url?.path == "/group/Automatic/delay" ? 504 : 200
-    }
-    RecordingURLProtocol.response = { request in
-        switch request.url?.path {
-        case "/version":
-            return Data(#"{"version":"test"}"#.utf8)
-        case "/proxies":
-            return Data("""
-            {
-              "proxies": {
-                "GLOBAL": {"type":"Selector","now":"Automatic","all":["Automatic"]},
-                "Automatic": {
-                  "type":"URLTest",
-                  "now":"Hong Kong 01",
-                  "all":["Hong Kong 01"],
-                  "testUrl":"https://cp.cloudflare.com/generate_204"
-                },
-                "Hong Kong 01": {"type":"Shadowsocks"}
-              }
-            }
-            """.utf8)
-        case "/group/Automatic/delay":
-            return Data(#"{"message":"get delay: all proxies timeout"}"#.utf8)
-        default:
-            return Data(#"{"delay":123}"#.utf8)
-        }
-    }
+    RecordingURLProtocol.useConfiguredLatencyDefaultsFixture()
+    defer { RecordingURLProtocol.reset() }
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [RecordingURLProtocol.self]
     let session = URLSession(configuration: configuration)
@@ -447,14 +420,6 @@ import Testing
     await store.refreshProxiesAndLatency()
     await store.shutdownRuntime()
 
-    let delayURL = try #require(
-        RecordingURLProtocol.requestedURLs.first {
-            $0.absoluteString.contains("/proxies/Hong%20Kong%2001/delay")
-        }
-    )
-    let components = try #require(URLComponents(url: delayURL, resolvingAgainstBaseURL: false))
-    #expect(components.queryItems?.first { $0.name == "url" }?.value == "https://cp.cloudflare.com/generate_204")
-    #expect(components.queryItems?.first { $0.name == "timeout" }?.value == "2500")
     #expect(store.proxyGroups.first { $0.name == "Automatic" }?.nodes.first?.latency == 123)
 }
 
@@ -752,30 +717,28 @@ private func testProxyGroup() -> ProxyGroup {
 }
 
 private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
+    private enum Fixture: Sendable {
+        case empty
+        case configuredLatencyDefaults
+    }
+
+    private struct StubResponse: Sendable {
+        let statusCode: Int
+        let data: Data
+    }
+
     private static let stateLock = NSLock()
-    nonisolated(unsafe) private static var requestedURLsStorage: [URL] = []
-    nonisolated(unsafe) private static var responseStorage: ((URLRequest) throws -> Data)?
-    nonisolated(unsafe) private static var statusCodeStorage: ((URLRequest) -> Int)?
+    nonisolated(unsafe) private static var fixtureStorage = Fixture.empty
 
-    static var requestedURLs: [URL] {
-        withStateLock { requestedURLsStorage }
-    }
-
-    static var response: ((URLRequest) throws -> Data)? {
-        get { withStateLock { responseStorage } }
-        set { withStateLock { responseStorage = newValue } }
-    }
-
-    static var statusCode: ((URLRequest) -> Int)? {
-        get { withStateLock { statusCodeStorage } }
-        set { withStateLock { statusCodeStorage = newValue } }
+    static func useConfiguredLatencyDefaultsFixture() {
+        withStateLock {
+            fixtureStorage = .configuredLatencyDefaults
+        }
     }
 
     static func reset() {
         withStateLock {
-            requestedURLsStorage = []
-            responseStorage = nil
-            statusCodeStorage = nil
+            fixtureStorage = .empty
         }
     }
 
@@ -788,33 +751,84 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        let handlers = Self.record(request)
-        do {
-            let data = try handlers.response?(request) ?? Data()
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: handlers.statusCode?(request) ?? 200,
-                httpVersion: nil,
-                headerFields: nil
-            )!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
         }
+
+        let stub = Self.stubResponse(for: request)
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: stub.statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: stub.data)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
 
-    private static func record(
-        _ request: URLRequest
-    ) -> (response: ((URLRequest) throws -> Data)?, statusCode: ((URLRequest) -> Int)?) {
-        withStateLock {
-            if let url = request.url {
-                requestedURLsStorage.append(url)
-            }
-            return (responseStorage, statusCodeStorage)
+    private static func stubResponse(for request: URLRequest) -> StubResponse {
+        let fixture = withStateLock { fixtureStorage }
+        switch fixture {
+        case .empty:
+            return StubResponse(statusCode: 200, data: Data())
+        case .configuredLatencyDefaults:
+            return configuredLatencyDefaultsResponse(for: request)
+        }
+    }
+
+    private static func configuredLatencyDefaultsResponse(for request: URLRequest) -> StubResponse {
+        switch request.url?.path {
+        case "/version":
+            return StubResponse(
+                statusCode: 200,
+                data: Data(#"{"version":"test"}"#.utf8)
+            )
+        case "/proxies":
+            return StubResponse(
+                statusCode: 200,
+                data: Data("""
+                {
+                  "proxies": {
+                    "GLOBAL": {"type":"Selector","now":"Automatic","all":["Automatic"]},
+                    "Automatic": {
+                      "type":"URLTest",
+                      "now":"Hong Kong 01",
+                      "all":["Hong Kong 01"],
+                      "testUrl":"https://cp.cloudflare.com/generate_204"
+                    },
+                    "Hong Kong 01": {"type":"Shadowsocks"}
+                  }
+                }
+                """.utf8)
+            )
+        case "/group/Automatic/delay":
+            return StubResponse(
+                statusCode: 504,
+                data: Data(#"{"message":"get delay: all proxies timeout"}"#.utf8)
+            )
+        case let path? where path.hasPrefix("/proxies/") && path.hasSuffix("/delay"):
+            let queryItems = request.url.flatMap {
+                URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems
+            } ?? []
+            let query = Dictionary(
+                uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") }
+            )
+            let receivedConfiguredDefaults = query["url"] == "https://cp.cloudflare.com/generate_204"
+                && query["timeout"] == "2500"
+            return StubResponse(
+                statusCode: 200,
+                data: Data("{\"delay\":\(receivedConfiguredDefaults ? 123 : 1)}".utf8)
+            )
+        default:
+            return StubResponse(statusCode: 200, data: Data())
         }
     }
 
