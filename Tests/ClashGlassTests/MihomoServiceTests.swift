@@ -752,14 +752,31 @@ private func testProxyGroup() -> ProxyGroup {
 }
 
 private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var requestedURLs: [URL] = []
-    nonisolated(unsafe) static var response: ((URLRequest) throws -> Data)?
-    nonisolated(unsafe) static var statusCode: ((URLRequest) -> Int)?
+    private static let stateLock = NSLock()
+    nonisolated(unsafe) private static var requestedURLsStorage: [URL] = []
+    nonisolated(unsafe) private static var responseStorage: ((URLRequest) throws -> Data)?
+    nonisolated(unsafe) private static var statusCodeStorage: ((URLRequest) -> Int)?
+
+    static var requestedURLs: [URL] {
+        withStateLock { requestedURLsStorage }
+    }
+
+    static var response: ((URLRequest) throws -> Data)? {
+        get { withStateLock { responseStorage } }
+        set { withStateLock { responseStorage = newValue } }
+    }
+
+    static var statusCode: ((URLRequest) -> Int)? {
+        get { withStateLock { statusCodeStorage } }
+        set { withStateLock { statusCodeStorage = newValue } }
+    }
 
     static func reset() {
-        requestedURLs = []
-        response = nil
-        statusCode = nil
+        withStateLock {
+            requestedURLsStorage = []
+            responseStorage = nil
+            statusCodeStorage = nil
+        }
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -771,14 +788,12 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        if let url = request.url {
-            Self.requestedURLs.append(url)
-        }
+        let handlers = Self.record(request)
         do {
-            let data = try Self.response?(request) ?? Data()
+            let data = try handlers.response?(request) ?? Data()
             let response = HTTPURLResponse(
                 url: request.url!,
-                statusCode: Self.statusCode?(request) ?? 200,
+                statusCode: handlers.statusCode?(request) ?? 200,
                 httpVersion: nil,
                 headerFields: nil
             )!
@@ -791,6 +806,23 @@ private final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+
+    private static func record(
+        _ request: URLRequest
+    ) -> (response: ((URLRequest) throws -> Data)?, statusCode: ((URLRequest) -> Int)?) {
+        withStateLock {
+            if let url = request.url {
+                requestedURLsStorage.append(url)
+            }
+            return (responseStorage, statusCodeStorage)
+        }
+    }
+
+    private static func withStateLock<T>(_ operation: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return operation()
+    }
 }
 
 @Test func proxyRegionDecoderRecognizesChineseNodeNames() {
