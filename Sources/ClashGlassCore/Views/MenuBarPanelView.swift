@@ -173,8 +173,8 @@ public struct MenuBarPanelView: View {
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(store.text(.search), text: $searchText)
-                    .textFieldStyle(.plain)
+                MenuBarSearchField(placeholder: store.text(.search), text: $searchText)
+                    .frame(height: 18)
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)

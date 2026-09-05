@@ -44,7 +44,7 @@ final class MenuBarPanelController: NSObject {
 
         panel = MenuBarPanelWindow(
             contentRect: NSRect(origin: .zero, size: hostingView.fittingSize),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -95,6 +95,7 @@ final class MenuBarPanelController: NSObject {
         positionPanel(below: statusFrame)
 
         panel.alphaValue = 0
+        NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
         panel.makeKey()
         // Opening the panel should not begin editing the first text field.
@@ -140,6 +141,7 @@ final class MenuBarPanelController: NSObject {
             return
         }
         isPresented = false
+        panel.makeFirstResponder(panel)
         panelRefreshTask?.cancel()
         fadeGeneration += 1
         let generation = fadeGeneration
@@ -223,6 +225,29 @@ final class MenuBarPanelController: NSObject {
 
 private final class MenuBarPanelWindow: NSPanel {
     var onCancel: (() -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown,
+           let contentView {
+            let point = contentView.convert(event.locationInWindow, from: nil)
+            var target = contentView.hitTest(point)
+            var clickedEditor = false
+            while let view = target {
+                if view is NSTextField || view is NSTextView {
+                    clickedEditor = true
+                    break
+                }
+                target = view.superview
+            }
+            if !clickedEditor { makeFirstResponder(self) }
+        }
+        super.sendEvent(event)
+    }
+
+    override func resignKey() {
+        makeFirstResponder(self)
+        super.resignKey()
+    }
 
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
