@@ -97,6 +97,9 @@ final class MenuBarPanelController: NSObject {
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.makeKey()
+        // Opening the panel should not begin editing the first text field.
+        // Reset this on every presentation, including after a previous search.
+        panel.makeFirstResponder(panel)
         refreshPanelSnapshot()
 
         if reducesMotion {
