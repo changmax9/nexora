@@ -4,6 +4,8 @@ public struct MenuBarPanelView: View {
     @Bindable private var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @State private var searchText = ""
+    @State private var isRefreshingNodes = false
 
     public init(store: AppStore) {
         self.store = store
@@ -13,233 +15,238 @@ public struct MenuBarPanelView: View {
         let accent = store.accent.color(for: colorScheme)
         let palette = GlassPalette(colorScheme: colorScheme, accent: accent)
         VStack(alignment: .leading, spacing: MenuBarQuickAccessPolicy.sectionSpacing) {
-            header(palette: palette)
-            mainControlSection
+            HStack(spacing: 8) {
+                Text("Nexora")
+                    .font(.system(size: 16, weight: .semibold))
+                Spacer(minLength: 12)
+                Text(store.menuBarProfileTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(store.menuBarProfileTitle)
+            }
+            .frame(height: MenuBarQuickAccessPolicy.headerHeight)
+
+            connectionSection(palette: palette)
             nodeSection(palette: palette)
+            footer(palette: palette)
         }
         .padding(MenuBarQuickAccessPolicy.outerPadding)
-        .frame(
-            width: MenuBarQuickAccessPolicy.panelWidth,
-            height: MenuBarQuickAccessPolicy.panelHeight,
-            alignment: .top
-        )
-        .background(palette.background.opacity(0.88))
-        .clipped()
+        .frame(width: MenuBarQuickAccessPolicy.panelWidth, height: MenuBarQuickAccessPolicy.panelHeight)
+        .background(palette.background.opacity(0.97))
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(palette.cardStroke.opacity(0.6), lineWidth: 0.5)
+        }
         .tint(accent)
         .accentColor(accent)
-        .environment(
-            \.clashGlassReduceMotion,
-            AppMotionPolicy.reducesMotion(
-                systemPreference: accessibilityReduceMotion,
-                appPreference: store.reduceMotion
-            )
-        )
-        .task {
-            if !store.isCoreRunning {
-                await store.refreshProxies()
-            }
-            await store.refreshNetworkIdentity()
-        }
+        .environment(\.clashGlassReduceMotion, AppMotionPolicy.reducesMotion(
+            systemPreference: accessibilityReduceMotion, appPreference: store.reduceMotion
+        ))
     }
 
-    private func header(palette: GlassPalette) -> some View {
-        let serverName = store.menuBarHeaderTitle
-        return MenuBarPanelSurface(radius: 18, padding: 12) {
-            HStack(spacing: 12) {
-                Text(NetworkIdentity(
-                    ip: "",
-                    countryCode: store.networkCountryCode,
-                    countryName: ""
-                ).flagEmoji)
-                .font(.system(size: 24))
+    private var connectionTitle: String {
+        if store.isRuntimeTransitioning { return store.text(.updating) }
+        guard store.isStarted else { return store.text(.stopped) }
+        return store.text(store.isSystemProxyEnabled || store.isTunEnabled ? .connected : .coreRunning)
+    }
 
+    private func connectionSection(palette: GlassPalette) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: store.isStarted ? "shield.lefthalf.filled" : "shield")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(store.isStarted ? palette.rose : palette.secondaryText)
+                    .frame(width: 36, height: 36)
+                    .background(store.isStarted ? palette.selectionFill : palette.cardFill, in: .rect(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(serverName)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                    Text(connectionTitle)
+                        .font(.system(size: 15, weight: .semibold))
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .minimumScaleFactor(0.82)
-                        .layoutPriority(1)
-                        .help(serverName)
-                    Text(store.externalIP)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(palette.secondaryText)
-                        .lineLimit(1)
+                    Text("VPN · \(store.text(store.selectedMode.titleKey))")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-
-                Spacer()
-
-                if store.isLatencyTesting {
-                    ProgressView(value: store.latencyTestProgress.fraction)
-                        .progressViewStyle(.circular)
-                        .controlSize(.small)
+                Spacer(minLength: 6)
+                if store.isRuntimeTransitioning {
+                    ProgressView().controlSize(.small)
+                        .frame(width: 52, height: 36)
                 } else {
-                    LiquidIconButton(
-                        title: store.text(.refresh),
-                        symbol: "arrow.clockwise",
-                        size: 30
-                    ) {
-                        Task {
-                            await store.refreshProxiesAndLatency()
-                            await store.refreshNetworkIdentity()
-                        }
+                    LiquidToggle(isOn: store.isStarted) {
+                        Task { await store.toggleRuntime(configPath: store.configPath) }
                     }
+                    .frame(width: 52, height: 36)
+                    .accessibilityLabel("VPN")
                 }
             }
-        }
-        .frame(height: MenuBarQuickAccessPolicy.headerHeight)
-    }
-
-    private var mainControlSection: some View {
-        MenuBarPanelSurface(radius: 18, padding: 12) {
-            MenuBarToggleRow(
-                title: "VPN",
-                detail: mainVPNDetail,
-                symbol: "shield.lefthalf.filled",
-                isOn: store.isStarted
-            ) {
-                Task {
-                    await store.toggleRuntime(configPath: store.configPath)
-                }
+            Divider().opacity(0.6)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.text(.menuSelectedNode))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text(store.menuBarSelectedNodeName ?? "—")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(store.menuBarSelectedNodeName ?? "")
             }
+            HStack(spacing: 5) {
+                Text(NetworkIdentity(ip: "", countryCode: store.networkCountryCode, countryName: "").flagEmoji)
+                Text(store.networkEgressKind.title(language: store.language))
+                    .lineLimit(1)
+                Spacer(minLength: 3)
+                Text(store.externalIP)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.secondary)
+            .help(store.networkCountryName)
         }
+        .padding(12)
+        .frame(maxWidth: .infinity)
         .frame(height: MenuBarQuickAccessPolicy.mainControlHeight)
+        .background(palette.cardFill, in: .rect(cornerRadius: 14))
     }
 
-    private var mainVPNDetail: String {
-        guard store.isStarted else {
-            return store.text(.stopped)
-        }
-        return store.isSystemProxyEnabled ? store.text(.connected) : store.text(.coreRunning)
+    private var filteredNodes: [ProxyNode] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.menuBarProxyNodes.filter { query.isEmpty || $0.name.localizedStandardContains(query) }
     }
 
     private func nodeSection(palette: GlassPalette) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(store.menuBarProfileTitle)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                Spacer()
-                Text("\(store.menuBarProxyNodes.count) \(store.text(.nodes))")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(palette.tertiaryText)
-            }
-            .padding(.horizontal, 4)
-            .frame(height: MenuBarQuickAccessPolicy.nodeHeaderHeight)
-
-            MenuBarPanelSurface(radius: 18, padding: 6) {
-                if store.menuBarProxyNodes.isEmpty {
-                    Text(store.text(.noProxyNodes))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(palette.secondaryText)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView(.vertical) {
-                        LazyVStack(spacing: 3) {
-                            ForEach(store.menuBarProxyNodes) { node in
-                                MenuBarProxyRow(node: node) {
-                                    Task {
-                                        await store.selectProxyRemote(
-                                            groupName: MenuBarQuickAccessPolicy.selectorName,
-                                            nodeName: node.name
-                                        )
-                                    }
+        VStack(spacing: MenuBarQuickAccessPolicy.nodeHeaderSpacing) {
+            HStack(spacing: 8) {
+                Text(store.text(.menuNodes))
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 4)
+                if let selector = store.menuBarSelector {
+                    Menu {
+                        ForEach(MenuBarProxyResolver.selectors(in: store.proxyGroups)) { group in
+                            Button {
+                                store.menuBarPreferredGroupName = group.name
+                                searchText = ""
+                            } label: {
+                                if group.name == selector.name {
+                                    Label(group.name, systemImage: "checkmark")
+                                } else {
+                                    Text(group.name)
                                 }
                             }
                         }
-                        .padding(2)
+                    } label: {
+                        Text(selector.name)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 150, alignment: .trailing)
                     }
-                    .scrollIndicators(.visible)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .menuStyle(.borderlessButton)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(selector.name)
+                }
+                Button {
+                    isRefreshingNodes = true
+                    Task {
+                        defer { isRefreshingNodes = false }
+                        await store.refreshProxiesAndLatency()
+                    }
+                } label: {
+                    if isRefreshingNodes || store.isLatencyTesting {
+                        ProgressView().controlSize(.mini).frame(width: 24, height: 24)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(width: 24, height: 24)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(store.isRuntimeTransitioning || isRefreshingNodes || store.isLatencyTesting)
+                .help(store.text(.delayTest))
+                .accessibilityLabel(store.text(.delayTest))
+            }
+            .frame(height: MenuBarQuickAccessPolicy.nodeHeaderHeight)
+
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField(store.text(.search), text: $searchText)
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(store.text(.cancel))
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.horizontal, 9)
+            .frame(height: MenuBarQuickAccessPolicy.searchHeight)
+            .background(palette.cardFill, in: .rect(cornerRadius: 8))
+
+            ScrollViewReader { scrollProxy in
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 2) {
+                        if filteredNodes.isEmpty {
+                            Text(store.text(searchText.isEmpty ? .noProxyNodes : .noMatchingNodes))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 150)
+                        } else {
+                            ForEach(filteredNodes) { node in
+                                MenuBarProxyRow(node: node) {
+                                    guard let group = store.menuBarSelector else { return }
+                                    Task { await store.selectProxyRemote(groupName: group.name, nodeName: node.name) }
+                                }
+                                .disabled(store.isRuntimeTransitioning)
+                                .id(node.id)
+                            }
+                        }
+                    }
+                }
+                .scrollIndicators(.automatic)
+                .onAppear {
+                    if let selected = store.menuBarProxyNodes.first(where: \.isSelected) {
+                        scrollProxy.scrollTo(selected.id, anchor: .center)
+                    }
+                }
+                .onChange(of: store.menuBarSelector?.name) {
+                    if let selected = store.menuBarProxyNodes.first(where: \.isSelected) {
+                        scrollProxy.scrollTo(selected.id, anchor: .center)
+                    }
                 }
             }
             .frame(height: MenuBarQuickAccessPolicy.nodeViewportHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .frame(
-            height: MenuBarQuickAccessPolicy.nodeHeaderHeight
-                + MenuBarQuickAccessPolicy.nodeHeaderSpacing
-                + MenuBarQuickAccessPolicy.nodeViewportHeight
-        )
     }
 
-}
-
-private struct MenuBarPanelSurface<Content: View>: View {
-    let radius: CGFloat
-    let padding: CGFloat
-    @ViewBuilder let content: Content
-    @Environment(\.colorScheme) private var colorScheme
-
-    init(
-        radius: CGFloat,
-        padding: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.radius = radius
-        self.padding = padding
-        self.content = content()
-    }
-
-    var body: some View {
-        let palette = GlassPalette(colorScheme: colorScheme)
-        content
-            .padding(padding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                palette.cardFill,
-                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-            )
-            .modifier(MenuBarGlassModifier(radius: radius))
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(palette.cardStroke, lineWidth: 1.2)
+    private func footer(palette: GlassPalette) -> some View {
+        HStack(spacing: 6) {
+            if let error = store.lastErrorMessage {
+                Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                Text(error)
+                    .lineLimit(2)
+                    .help(error)
+            } else {
+                Circle()
+                    .fill(store.isStarted ? palette.rose : palette.tertiaryText)
+                    .frame(width: 5, height: 5)
+                Text(store.isLatencyTesting ? "\(store.text(.checking)) \(store.latencyTestProgress.completed)/\(store.latencyTestProgress.total)" : connectionTitle)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(filteredNodes.count) / \(store.menuBarProxyNodes.count)")
+                    .monospacedDigit()
             }
-    }
-}
-
-private struct MenuBarGlassModifier: ViewModifier {
-    let radius: CGFloat
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(.clear, in: .rect(cornerRadius: radius))
-        } else {
-            content
         }
-    }
-}
-
-private struct MenuBarToggleRow: View {
-    let title: String
-    let detail: String
-    let symbol: String
-    let isOn: Bool
-    let action: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let palette = GlassPalette(colorScheme: colorScheme)
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(palette.secondaryText)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                Text(detail)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(palette.tertiaryText)
-            }
-
-            Spacer()
-
-            LiquidToggle(isOn: isOn, action: action)
-                .frame(width: 52, height: 40)
-        }
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: MenuBarQuickAccessPolicy.footerHeight)
     }
 }
 
@@ -253,55 +260,38 @@ private struct MenuBarProxyRow: View {
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(palette.rose)
-                    .frame(width: 14)
-                    .opacity(node.isSelected ? 1 : 0)
-                    .accessibilityHidden(!node.isSelected)
-
+            HStack(spacing: 9) {
+                Image(systemName: node.isSelected ? "checkmark.circle.fill" : node.isGroup ? "arrow.triangle.branch" : "circle")
+                    .font(.system(size: node.isSelected || node.isGroup ? 13 : 7, weight: .medium))
+                    .foregroundStyle(node.isSelected ? palette.rose : palette.tertiaryText)
+                    .frame(width: 15)
                 Text(node.name)
-                    .font(.system(size: 12, weight: node.isSelected ? .bold : .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: node.isSelected ? .semibold : .regular))
                     .lineLimit(1)
-                Spacer()
-                Text(node.latency.map { "\($0) ms" } ?? "—")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(latencyColor(palette: palette))
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(
-                node.isSelected
-                    ? palette.selectionFill
-                    : isHovering ? palette.selectionHover : Color.clear,
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay {
-                if node.isSelected {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(palette.selectionStroke, lineWidth: 1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                if !node.isGroup {
+                    Text(node.latency.map { "\($0) ms" } ?? "—")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(latencyColor(palette: palette))
+                        .fixedSize()
                 }
             }
+            .padding(.horizontal, 9)
+            .frame(height: 34)
+            .contentShape(Rectangle())
+            .background(node.isSelected ? palette.selectionFill : isHovering ? palette.cardFill : .clear, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
         .help(node.name)
+        .accessibilityAddTraits(node.isSelected ? .isSelected : [])
         .onHover { isHovering = $0 }
-        .animation(
-            reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.78),
-            value: isHovering
-        )
-        .animation(
-            reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.80),
-            value: node.isSelected
-        )
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isHovering)
     }
 
     private func latencyColor(palette: GlassPalette) -> Color {
-        guard let latency = node.latency else {
-            return palette.tertiaryText
-        }
-        return latency < 180 ? palette.green : .orange
+        guard let latency = node.latency else { return palette.tertiaryText }
+        if latency >= ProxyNodeFilter.slowLatencyThreshold { return .orange }
+        return colorScheme == .dark ? palette.green : Color(red: 0.14, green: 0.47, blue: 0.34)
     }
 }

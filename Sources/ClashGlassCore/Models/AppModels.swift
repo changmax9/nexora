@@ -385,7 +385,6 @@ struct ProxyGroupExpansionState: Equatable, Sendable {
 }
 
 enum MenuBarQuickAccessPolicy {
-    static let selectorName = "Mutdot"
     static let visibleConnectionControlCount = 1
     static let showsSystemProxyToggle = false
     static let showsTunToggle = false
@@ -393,25 +392,29 @@ enum MenuBarQuickAccessPolicy {
     static let clipsNodeViewport = true
 
     static let panelWidth: CGFloat = 360
-    static let outerPadding: CGFloat = 12
+    static let outerPadding: CGFloat = 14
     static let topInset = outerPadding
     static let bottomInset = outerPadding
-    static let sectionSpacing: CGFloat = 10
-    static let headerHeight: CGFloat = 66
-    static let mainControlHeight: CGFloat = 72
-    static let nodeHeaderHeight: CGFloat = 20
+    static let sectionSpacing: CGFloat = 12
+    static let headerHeight: CGFloat = 24
+    static let mainControlHeight: CGFloat = 142
+    static let nodeHeaderHeight: CGFloat = 28
     static let nodeHeaderSpacing: CGFloat = 8
-    static let nodeViewportHeight: CGFloat = 244
+    static let nodeViewportHeight: CGFloat = 210
+    static let searchHeight: CGFloat = 30
+    static let footerHeight: CGFloat = 26
 
     static var requiredContentHeight: CGFloat {
         topInset
             + bottomInset
-            + (sectionSpacing * 2)
+            + (sectionSpacing * 3)
             + headerHeight
             + mainControlHeight
             + nodeHeaderHeight
-            + nodeHeaderSpacing
+            + (nodeHeaderSpacing * 2)
+            + searchHeight
             + nodeViewportHeight
+            + footerHeight
     }
 
     static var panelHeight: CGFloat {

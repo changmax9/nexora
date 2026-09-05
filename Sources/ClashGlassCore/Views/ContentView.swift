@@ -70,124 +70,73 @@ private struct IconRail: View {
     @Bindable var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.clashGlassReduceMotion) private var reduceMotion
-    @Namespace private var selectionNamespace
     @State private var hoverState = RailHoverState()
-
-    private let primarySections: [AppSection] = [
-        .dashboard,
-        .diagnostics,
-        .proxies,
-        .routing,
-        .profiles,
-        .connections,
-        .settings,
-    ]
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        let selectedRailItem = RailSelectionResolver.item(for: store.selectedSection)
-        VStack(spacing: 4) {
-            ForEach(primarySections) { section in
+        VStack(spacing: CGFloat(RailLayoutMetrics.itemSpacing)) {
+            ForEach(AppSection.allCases) { section in
                 let item = RailItem.section(section)
                 let presentation = RailItemPresentation(
                     item: item,
                     selectedSection: store.selectedSection,
-                    hoveredItem: hoverState.hoveredItem,
-                    reduceMotion: reduceMotion
+                    hoveredItem: hoverState.hoveredItem
                 )
 
                 Button {
                     store.selectedSection = section
                 } label: {
-                    ZStack {
-                        Color.clear
-                            .frame(
-                                width: CGFloat(RailHitTargetMetrics.width),
-                                height: CGFloat(RailHitTargetMetrics.height)
-                            )
-
-                        ZStack {
-                            if presentation.showsHoverBackground {
-                                railHoverSurface(palette: palette)
-                            }
-
-                            if presentation.showsSelectionBackground {
-                                railSelection(
-                                    palette: palette,
-                                    glowOpacity: presentation.selectionGlowOpacity
-                                )
-                                .matchedGeometryEffect(
-                                    id: "rail-selection",
-                                    in: selectionNamespace
-                                )
-                            }
-
-                            Image(systemName: section.symbol)
-                                .font(.system(size: 17, weight: .bold))
-                                .symbolRenderingMode(.monochrome)
-                                .foregroundStyle(
-                                    presentation.isHovered || presentation.showsSelectionBackground
-                                        ? palette.primaryText
-                                        : palette.secondaryText
-                                )
-                                .scaleEffect(presentation.iconScale)
-                        }
-                        .frame(width: 54, height: 30)
-                        .animation(
-                            reduceMotion ? nil : .easeOut(duration: 0.16),
-                            value: presentation.iconScale
+                    Image(systemName: section.symbol)
+                        .font(.system(size: 17, weight: .bold))
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(
+                            presentation.emphasizesIcon
+                                ? palette.primaryText
+                                : palette.secondaryText
                         )
-                        .overlay {
-                            if presentation.showsSelectionBackground && presentation.isHovered {
-                                Capsule(style: .continuous)
-                                    .strokeBorder(
-                                        palette.selectionStroke.opacity(0.56),
-                                        lineWidth: 0.8
-                                    )
-                            }
-                        }
-                    }
-                    .contentShape(Rectangle())
+                        .animation(
+                            RailSelectionMotion.animation(reduceMotion: reduceMotion),
+                            value: presentation.emphasizesIcon
+                        )
+                        .frame(
+                            width: CGFloat(RailHitTargetMetrics.width),
+                            height: CGFloat(RailHitTargetMetrics.height)
+                        )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .scaleEffect(presentation.scale)
-                .offset(y: presentation.verticalOffset)
-                .brightness(presentation.brightness)
                 .onHover { hovering in
                     hoverState.update(item: item, isHovering: hovering)
                 }
-                .animation(
-                    reduceMotion ? nil : .easeOut(duration: 0.14),
-                    value: presentation.isHovered
-                )
                 .help(store.text(section.titleKey))
             }
 
             Spacer()
         }
-        .padding(.top, 46)
-        .animation(
-            RailSelectionMotion.animation(reduceMotion: reduceMotion),
-            value: selectedRailItem
-        )
+        .background(alignment: .top) {
+            // Keep one surface alive so interrupted selections only retarget its position.
+            railSelection(palette: palette)
+                .frame(
+                    width: CGFloat(RailLayoutMetrics.selectionWidth),
+                    height: CGFloat(RailLayoutMetrics.selectionHeight)
+                )
+                .frame(
+                    width: CGFloat(RailHitTargetMetrics.width),
+                    height: CGFloat(RailHitTargetMetrics.height)
+                )
+                .offset(y: CGFloat(RailLayoutMetrics.selectionOffset(for: store.selectedSection)))
+                .animation(
+                    RailSelectionMotion.animation(reduceMotion: reduceMotion),
+                    value: store.selectedSection
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .padding(.top, CGFloat(RailLayoutMetrics.topInset))
     }
 
     @ViewBuilder
-    private func railHoverSurface(palette: GlassPalette) -> some View {
-        Capsule(style: .continuous)
-            .fill(palette.selectionHover.opacity(0.42))
-            .overlay {
-                Capsule(style: .continuous)
-                    .strokeBorder(palette.selectionStroke.opacity(0.26), lineWidth: 0.8)
-            }
-            .transition(.opacity)
-    }
-
-    @ViewBuilder
-    private func railSelection(
-        palette: GlassPalette,
-        glowOpacity: Double
-    ) -> some View {
+    private func railSelection(palette: GlassPalette) -> some View {
         Capsule(style: .continuous)
             .fill(palette.railSelection)
             .overlay {
@@ -195,7 +144,7 @@ private struct IconRail: View {
                     .strokeBorder(palette.selectionStroke.opacity(0.52), lineWidth: 0.8)
             }
             .shadow(
-                color: palette.shadow.opacity(glowOpacity),
+                color: palette.shadow.opacity(0.075),
                 radius: RailSurfaceMetrics.selectionShadowRadius,
                 y: 3
             )
@@ -243,6 +192,7 @@ private struct MainStage: View {
                             await store.toggleRuntime(configPath: store.configPath)
                         }
                     }
+                    .disabled(store.isRuntimeTransitioning)
 
                     CoreStatusToolbarButton(
                         symbol: coreStatusSymbol,
@@ -251,6 +201,7 @@ private struct MainStage: View {
                     ) {
                         showsCoreRestartConfirmation = true
                     }
+                    .disabled(store.isRuntimeTransitioning)
 
                     ZStack {
                         ToolbarMenuIconSurface(

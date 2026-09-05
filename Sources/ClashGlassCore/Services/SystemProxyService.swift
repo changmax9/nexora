@@ -101,10 +101,25 @@ public struct SystemProxyCommand: Equatable, Sendable {
 }
 
 public struct SystemProxyService: Sendable {
-    public init() {}
+    private let captureOverride: (@Sendable (String) throws -> SystemProxySnapshot)?
+    private let applyOverride: (@Sendable (SystemProxyCommand) throws -> Void)?
+
+    public init() {
+        captureOverride = nil
+        applyOverride = nil
+    }
+
+    init(
+        capture: @escaping @Sendable (String) throws -> SystemProxySnapshot,
+        apply: @escaping @Sendable (SystemProxyCommand) throws -> Void
+    ) {
+        captureOverride = capture
+        applyOverride = apply
+    }
 
     public func capture(service: String) throws -> SystemProxySnapshot {
-        SystemProxySnapshot(
+        if let captureOverride { return try captureOverride(service) }
+        return SystemProxySnapshot(
             web: try SystemProxySettings.parse(
                 networksetupOutput: output(arguments: ["-getwebproxy", service])
             ),
@@ -118,6 +133,7 @@ public struct SystemProxyService: Sendable {
     }
 
     public func apply(_ command: SystemProxyCommand) throws {
+        if let applyOverride { return try applyOverride(command) }
         for step in command.steps {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: command.executable)

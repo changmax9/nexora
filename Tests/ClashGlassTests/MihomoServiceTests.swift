@@ -453,7 +453,7 @@ import Testing
 }
 
 @MainActor
-@Test func menuBarQuickNodesUseOnlyConcreteMutdotEntries() {
+@Test func menuBarQuickNodesResolveTheProfileSelectorAndKeepAutomaticChoices() {
     let store = AppStore()
     store.proxyGroups = [
         ProxyGroup(
@@ -482,8 +482,8 @@ import Testing
         ),
     ]
 
-    #expect(MenuBarQuickAccessPolicy.selectorName == "Mutdot")
-    #expect(store.menuBarProxyNodes.map(\.name) == ["香港HK01", "新加坡SG01"])
+    #expect(store.menuBarSelector?.name == "Mutdot")
+    #expect(store.menuBarProxyNodes.map(\.name) == ["自动选择", "香港HK01", "新加坡SG01"])
     #expect(store.menuBarSelectedNodeName == "新加坡SG01")
 }
 
@@ -520,7 +520,7 @@ import Testing
 
     #expect(store.menuBarSelectedNodeName == "新加坡SG01")
     #expect(store.menuBarHeaderTitle == "新加坡SG01")
-    #expect(store.menuBarProxyNodes.first(where: { $0.name == "新加坡SG01" })?.isSelected == true)
+    #expect(store.menuBarProxyNodes.first(where: { $0.name == "自动选择" })?.isSelected == true)
 }
 
 @Test func selectedLeafResolverStopsAtCyclicProxyGroups() {

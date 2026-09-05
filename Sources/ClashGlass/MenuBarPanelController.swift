@@ -14,6 +14,7 @@ final class MenuBarPanelController: NSObject {
     private var globalMouseMonitor: Any?
     private var panelRefreshTask: Task<Void, Never>?
     private var fadeGeneration = 0
+    private var isPresented = false
 
     private var reducesMotion: Bool {
         AppMotionPolicy.reducesMotion(
@@ -59,6 +60,7 @@ final class MenuBarPanelController: NSObject {
         panel.animationBehavior = .none
         panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
         panel.alphaValue = 0
+        panel.onCancel = { [weak self] in self?.hide() }
 
         if let button = statusItem.button {
             button.target = self
@@ -72,8 +74,8 @@ final class MenuBarPanelController: NSObject {
     }
 
     @objc
-    private func togglePanel() {
-        if panel.isVisible {
+    func togglePanel() {
+        if isPresented {
             hide()
         } else {
             show()
@@ -87,6 +89,7 @@ final class MenuBarPanelController: NSObject {
         }
 
         fadeGeneration += 1
+        isPresented = true
         let generation = fadeGeneration
         let statusFrame = buttonWindow.convertToScreen(button.frame)
         positionPanel(below: statusFrame)
@@ -130,10 +133,11 @@ final class MenuBarPanelController: NSObject {
     }
 
     private func hide() {
-        guard panel.isVisible else {
+        guard isPresented else {
             return
         }
-
+        isPresented = false
+        panelRefreshTask?.cancel()
         fadeGeneration += 1
         let generation = fadeGeneration
 
@@ -160,16 +164,13 @@ final class MenuBarPanelController: NSObject {
 
     private func positionPanel(below statusFrame: NSRect) {
         let panelSize = panel.frame.size
-        let screen = panel.screen
-            ?? NSScreen.screens.first(where: { $0.frame.intersects(statusFrame) })
+        let screen = NSScreen.screens.first(where: { $0.frame.intersects(statusFrame) })
+            ?? panel.screen
             ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? .zero
-        let horizontalInset: CGFloat = 8
-        let proposedX = statusFrame.midX - (panelSize.width / 2)
-        let maximumX = visibleFrame.maxX - panelSize.width - horizontalInset
-        let x = min(max(proposedX, visibleFrame.minX + horizontalInset), maximumX)
-        let y = statusFrame.minY - panelSize.height - 6
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.setFrameOrigin(MenuBarPanelPlacement.origin(
+            panelSize: panelSize, statusFrame: statusFrame, visibleFrame: visibleFrame
+        ))
     }
 
     private func installDismissMonitors() {
@@ -212,14 +213,18 @@ final class MenuBarPanelController: NSObject {
     }
 
     private func updateStatusIcon() {
-        let symbolName = store.isStarted ? "shield.lefthalf.filled" : "shield"
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Nexora")
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        statusItem.button?.image = NexoraStatusIcon.image()
+        statusItem.button?.toolTip = "Nexora · \(store.text(store.isStarted ? .running : .stopped))"
     }
 }
 
 private final class MenuBarPanelWindow: NSPanel {
+    var onCancel: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
+
     override var canBecomeKey: Bool {
         true
     }

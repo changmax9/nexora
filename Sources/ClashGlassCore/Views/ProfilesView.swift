@@ -118,7 +118,7 @@ struct ProfilesView: View {
         ) {
             Button(store.text(.deleteProfile), role: .destructive) {
                 guard let profilePendingDeletion else { return }
-                store.removeManagedProfile(profilePendingDeletion.id)
+                Task { await store.removeManagedProfile(profilePendingDeletion.id) }
                 self.profilePendingDeletion = nil
             }
             Button(store.text(.cancel), role: .cancel) {

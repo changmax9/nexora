@@ -420,22 +420,31 @@ private struct IntranetIPCard: View {
     }
 }
 
-private struct TrafficUsageCard: View {
+struct TrafficUsageCard: View {
     @Bindable var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
+        let totals = store.isStarted ? store.trafficUsageTotals : .zero
         GlassCard(radius: 14, padding: 15) {
             VStack(alignment: .leading, spacing: 12) {
                 CardHeader(symbol: "chart.pie.fill", title: store.text(.trafficUsage))
 
                 HStack(spacing: 14) {
-                    DonutView(first: store.isStarted ? 0.35 : 0.5)
+                    DonutView(totals: totals)
                         .frame(width: 58, height: 58)
                     VStack(alignment: .leading, spacing: 8) {
-                        LegendRow(color: palette.rose, title: store.text(.upload))
-                        LegendRow(color: palette.tertiaryText.opacity(0.75), title: store.text(.download))
+                        LegendRow(
+                            color: palette.rose,
+                            title: store.text(.upload),
+                            fraction: totals.uploadFraction
+                        )
+                        LegendRow(
+                            color: palette.tertiaryText.opacity(0.75),
+                            title: store.text(.download),
+                            fraction: totals.downloadFraction
+                        )
                     }
                 }
 
@@ -449,37 +458,57 @@ private struct TrafficUsageCard: View {
 }
 
 private struct DonutView: View {
-    let first: Double
+    let totals: TrafficUsageTotals
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
         ZStack {
             Circle()
-                .trim(from: 0.05, to: first)
-                .stroke(palette.rose, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                .rotationEffect(.degrees(-90))
+                .stroke(palette.cardStroke, lineWidth: 10)
             Circle()
-                .trim(from: first + 0.08, to: 0.95)
-                .stroke(palette.tertiaryText.opacity(0.72), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .stroke(palette.tertiaryText.opacity(0.75), lineWidth: 10)
+                .opacity(totals.hasTraffic ? 1 : 0)
+            Circle()
+                .trim(from: 0, to: totals.uploadFraction ?? 0)
+                .stroke(palette.rose, style: StrokeStyle(lineWidth: 10, lineCap: .butt))
                 .rotationEffect(.degrees(-90))
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.30), value: totals)
+        .accessibilityHidden(true)
     }
 }
 
 private struct LegendRow: View {
     let color: Color
     let title: String
+    let fraction: Double?
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(alignment: .top, spacing: 7) {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(color)
                 .frame(width: 20, height: 8)
-            Text(title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.80)
+                Group {
+                    if let fraction {
+                        Text(fraction, format: .percent.precision(.fractionLength(1)))
+                    } else {
+                        Text("—")
+                    }
+                }
+                .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
+            }
         }
+        .accessibilityElement(children: .combine)
     }
 }
 

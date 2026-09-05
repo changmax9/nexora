@@ -99,6 +99,11 @@ public enum AppString: String, CaseIterable, Sendable {
     case untested
     case slowNodes
     case noProxyNodes
+    case noMatchingNodes
+    case menuSelectedNode
+    case menuNodes
+    case menuQuickAccess
+    case updating
     case validateAll
     case openManagedFolder
     case importYAML
@@ -265,6 +270,11 @@ enum AppLocalization {
 
     private static let translations: [AppLanguage: [AppString: String]] = [
         .english: [
+            .menuQuickAccess: "Quick Access",
+            .menuNodes: "Nodes",
+            .noMatchingNodes: "No matching nodes",
+            .menuSelectedNode: "Selected node",
+            .updating: "Updating…",
             .settings: "Settings",
             .settingsSubtitle: "Personalize Nexora and review application information.",
             .appearance: "Appearance",
@@ -382,6 +392,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "The managed YAML copy and its saved routing overrides will be removed.",
         ],
         .simplifiedChinese: [
+            .menuQuickAccess: "快捷面板",
+            .menuNodes: "节点",
+            .noMatchingNodes: "没有匹配的节点",
+            .menuSelectedNode: "已选节点",
+            .updating: "正在更新…",
             .settings: "设置", .settingsSubtitle: "个性化 Nexora 并查看应用信息。",
             .appearance: "外观", .colorScheme: "配色方案", .accentColor: "强调色", .reduceMotion: "减少动态效果", .system: "跟随系统",
             .light: "浅色", .dark: "深色", .language: "语言", .systemDefault: "系统默认",
@@ -454,6 +469,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "托管的 YAML 副本及其保存的路由规则将被删除。",
         ],
         .traditionalChinese: [
+            .menuQuickAccess: "快捷面板",
+            .menuNodes: "節點",
+            .noMatchingNodes: "沒有符合的節點",
+            .menuSelectedNode: "已選節點",
+            .updating: "正在更新…",
             .settings: "設定", .settingsSubtitle: "個人化 Nexora 並檢視應用程式資訊。",
             .appearance: "外觀", .colorScheme: "配色方案", .accentColor: "強調色", .reduceMotion: "減少動態效果", .system: "跟隨系統",
             .light: "淺色", .dark: "深色", .language: "語言", .systemDefault: "系統預設",
@@ -526,6 +546,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "託管的 YAML 副本及其已儲存的路由規則將被刪除。",
         ],
         .japanese: [
+            .menuQuickAccess: "クイックアクセス",
+            .menuNodes: "ノード",
+            .noMatchingNodes: "一致するノードがありません",
+            .menuSelectedNode: "選択中のノード",
+            .updating: "更新中…",
             .settings: "設定", .settingsSubtitle: "Nexora の外観と言語、アプリ情報を管理します。",
             .appearance: "外観", .colorScheme: "カラースキーム", .accentColor: "アクセントカラー", .reduceMotion: "視差効果を減らす", .system: "システム",
             .light: "ライト", .dark: "ダーク", .language: "言語", .systemDefault: "システム設定",
@@ -598,6 +623,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "管理対象の YAML コピーと保存済みルーティングルールが削除されます。",
         ],
         .french: [
+            .menuQuickAccess: "Accès rapide",
+            .menuNodes: "Nœuds",
+            .noMatchingNodes: "Aucun nœud correspondant",
+            .menuSelectedNode: "Nœud sélectionné",
+            .updating: "Mise à jour…",
             .settings: "Réglages", .settingsSubtitle: "Personnalisez Nexora et consultez les informations de l’application.",
             .appearance: "Apparence", .colorScheme: "Thème", .accentColor: "Couleur d’accentuation", .reduceMotion: "Réduire les animations", .system: "Système",
             .light: "Clair", .dark: "Sombre", .language: "Langue", .systemDefault: "Langue du système",
@@ -674,6 +704,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "La copie YAML gérée et ses règles de routage enregistrées seront supprimées.",
         ],
         .russian: [
+            .menuQuickAccess: "Быстрый доступ",
+            .menuNodes: "Узлы",
+            .noMatchingNodes: "Нет подходящих узлов",
+            .menuSelectedNode: "Выбранный узел",
+            .updating: "Обновление…",
             .settings: "Настройки", .settingsSubtitle: "Настройте Nexora и просмотрите сведения о приложении.",
             .appearance: "Оформление", .colorScheme: "Цветовая схема", .accentColor: "Акцентный цвет", .reduceMotion: "Уменьшение движения", .system: "Системная",
             .light: "Светлая", .dark: "Тёмная", .language: "Язык", .systemDefault: "Системный язык",
@@ -750,6 +785,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "Управляемая копия YAML и сохранённые правила маршрутизации будут удалены.",
         ],
         .spanish: [
+            .menuQuickAccess: "Acceso rápido",
+            .menuNodes: "Nodos",
+            .noMatchingNodes: "No hay nodos coincidentes",
+            .menuSelectedNode: "Nodo seleccionado",
+            .updating: "Actualizando…",
             .settings: "Ajustes", .settingsSubtitle: "Personaliza Nexora y consulta la información de la aplicación.",
             .appearance: "Apariencia", .colorScheme: "Esquema de color", .accentColor: "Color de acento", .reduceMotion: "Reducir movimiento", .system: "Sistema",
             .light: "Claro", .dark: "Oscuro", .language: "Idioma", .systemDefault: "Idioma del sistema",
@@ -826,6 +866,11 @@ enum AppLocalization {
             .deleteProfileExplanation: "Se eliminarán la copia YAML gestionada y sus reglas de enrutamiento guardadas.",
         ],
         .portuguese: [
+            .menuQuickAccess: "Acesso rápido",
+            .menuNodes: "Nós",
+            .noMatchingNodes: "Nenhum nó correspondente",
+            .menuSelectedNode: "Nó selecionado",
+            .updating: "Atualizando…",
             .settings: "Definições", .settingsSubtitle: "Personalize o Nexora e consulte as informações da aplicação.",
             .appearance: "Aparência", .colorScheme: "Esquema de cores", .accentColor: "Cor de destaque", .reduceMotion: "Reduzir movimento", .system: "Sistema",
             .light: "Claro", .dark: "Escuro", .language: "Idioma", .systemDefault: "Idioma do sistema",

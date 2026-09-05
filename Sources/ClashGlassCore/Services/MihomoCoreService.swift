@@ -34,6 +34,7 @@ public final class MihomoCoreService {
     private var outputPipe: Pipe?
     private var outputSink: CoreOutputSink?
     private var pidFileURL: URL?
+    var onUnexpectedTermination: (@MainActor (String) -> Void)?
 
     public var isProcessRunning: Bool {
         process?.isRunning == true
@@ -147,7 +148,9 @@ public final class MihomoCoreService {
                 }
                 self.captureOutput()
                 if self.status != .stopped {
-                    self.status = .failed(self.outputSink?.lastMeaningfulLine ?? "Mihomo exited unexpectedly.")
+                    let message = self.outputSink?.lastMeaningfulLine ?? "Mihomo exited unexpectedly."
+                    self.status = .failed(message)
+                    self.onUnexpectedTermination?(message)
                 }
                 self.removePIDFile(for: process?.processIdentifier)
                 self.process = nil

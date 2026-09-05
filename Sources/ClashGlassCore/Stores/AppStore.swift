@@ -25,6 +25,11 @@ public final class AppStore {
     private var confirmedOutboundMode: OutboundMode = .rule
     private var isApplyingOutboundMode = false
     private var pendingOutboundMode: OutboundMode?
+    @ObservationIgnored private var runtimeTransitionWaiters: [CheckedContinuation<Void, Never>] = []
+    private var runtimeGeneration = 0
+    private var networkIdentityGeneration = 0
+    private(set) var isRefreshingNetworkIdentity = false
+    public private(set) var isRuntimeTransitioning = false
     public var selectedSection: AppSection = .dashboard
     public var isCoreRunning = false
     public var isStarted = false
@@ -74,6 +79,7 @@ public final class AppStore {
     public var socksPort = 7891
     public var selectedMode: OutboundMode = .rule
     public private(set) var stagedOutboundMode: OutboundMode?
+    public private(set) var stagedTunEnabled: Bool?
     public var selectedProfile = "No Profile"
     public var configPath = "\(NSHomeDirectory())/.config/clash/config.yaml"
     public private(set) var managedProfiles: [ManagedProfile] = []
@@ -96,6 +102,7 @@ public final class AppStore {
     public var downloadTotalText = "0"
     public var uploadTrafficUnit = "B"
     public var downloadTrafficUnit = "B"
+    private(set) var trafficUsageTotals = TrafficUsageTotals.zero
     public var lastErrorMessage: String?
     public private(set) var profileValidationStates: [ManagedProfile.ID: ProfileValidationState] = [:]
     var isLatencyTesting = false
@@ -103,6 +110,7 @@ public final class AppStore {
     public var speedSamples: [Double] = Array(repeating: 0, count: 28)
 
     var proxyGroups: [ProxyGroup] = []
+    var menuBarPreferredGroupName: String?
     var connections: [ConnectionEntry] = []
 
     public init(
@@ -159,6 +167,9 @@ public final class AppStore {
         if let profile = selectedManagedProfile {
             synchronizeConfiguration(from: profile.managedConfigURL)
         }
+        coreService.onUnexpectedTermination = { [weak self] message in
+            self?.handleCoreFailure(message)
+        }
     }
 
     public var selectedManagedProfile: ManagedProfile? {
@@ -187,28 +198,22 @@ public final class AppStore {
         )
     }
 
-    var menuBarProxyNodes: [ProxyNode] {
-        guard let selector = proxyGroups.first(where: {
-            $0.name == MenuBarQuickAccessPolicy.selectorName
-        }) else {
-            return []
-        }
-        let selectedNodeName = ProxySelectionResolver.selectedLeafNodeName(
-            selectedGroupName: selector.name,
-            groups: proxyGroups
+    var menuBarSelector: ProxyGroup? {
+        MenuBarProxyResolver.resolve(
+            groups: proxyGroups,
+            mode: selectedMode,
+            preferredName: menuBarPreferredGroupName
         )
-        return selector.nodes
-            .filter { !$0.isGroup }
-            .map { node in
-                var displayedNode = node
-                displayedNode.isSelected = node.name == selectedNodeName
-                return displayedNode
-            }
+    }
+
+    var menuBarProxyNodes: [ProxyNode] {
+        menuBarSelector?.nodes ?? []
     }
 
     var menuBarSelectedNodeName: String? {
-        ProxySelectionResolver.selectedLeafNodeName(
-            selectedGroupName: MenuBarQuickAccessPolicy.selectorName,
+        guard let selector = menuBarSelector else { return nil }
+        return ProxySelectionResolver.selectedLeafNodeName(
+            selectedGroupName: selector.name,
             groups: proxyGroups
         )
     }
@@ -222,56 +227,58 @@ public final class AppStore {
     }
 
     public func importManagedProfile(from sourceURL: URL) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         do {
             let profile = try await profileRepository.importProfile(from: sourceURL) { [coreService] stagedURL in
                 await coreService.validateConfig(path: stagedURL.path)
             }
-            try profileRepository.select(profile.id)
-            reloadManagedProfiles()
-            reloadRoutingOverrides()
-            synchronizeConfiguration(from: profile.managedConfigURL)
+            _ = await activateManagedProfile(profile)
             profileValidationStates[profile.id] = .valid()
-            lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
         }
     }
 
     public func selectManagedProfile(_ id: ManagedProfile.ID) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        guard let profile = managedProfiles.first(where: { $0.id == id }) else {
+            lastErrorMessage = ManagedProfileError.profileNotFound.localizedDescription
+            return
+        }
+        _ = await activateManagedProfile(profile)
+    }
+
+    public func removeManagedProfile(_ id: ManagedProfile.ID) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         do {
-            let wasStarted = isStarted
-            if isCoreRunning {
-                if wasStarted {
+            if id == selectedManagedProfileID {
+                if let replacement = managedProfiles.first(where: { $0.id != id }) {
+                    guard await activateManagedProfile(replacement) else { return }
+                } else if isStarted {
                     await stopRuntime(userInitiated: true)
                 } else {
                     await stopControllerOnly(userInitiated: true)
                 }
             }
-            try profileRepository.select(id)
-            reloadManagedProfiles()
-            guard let profile = selectedManagedProfile else {
-                throw ManagedProfileError.profileNotFound
-            }
-            reloadRoutingOverrides()
-            synchronizeConfiguration(from: profile.managedConfigURL)
-            if wasStarted {
-                await toggleRuntime(configPath: configPath)
-            }
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    public func removeManagedProfile(_ id: ManagedProfile.ID) {
-        do {
             try profileRepository.remove(id)
             try? routingOverrideRepository.removeProfile(id)
             profileValidationStates.removeValue(forKey: id)
             reloadManagedProfiles()
             reloadRoutingOverrides()
-            if let profile = selectedManagedProfile {
-                synchronizeConfiguration(from: profile.managedConfigURL)
+            if selectedManagedProfile == nil {
+                stagedOutboundMode = nil
+                stagedTunEnabled = nil
+                selectedMode = .rule
+                confirmedOutboundMode = .rule
+                isTunEnabled = false
+                proxyGroups = []
+                connections = []
+                if FileManager.default.fileExists(atPath: profileRepository.runtimeConfigURL.path) {
+                    try FileManager.default.removeItem(at: profileRepository.runtimeConfigURL)
+                }
             }
             lastErrorMessage = nil
         } catch {
@@ -323,6 +330,8 @@ public final class AppStore {
     }
 
     func addRoutingOverride(input: String, policy: RoutingPolicy) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         guard let profileID = selectedManagedProfileID else {
             lastErrorMessage = "Select a managed profile before adding routing rules."
             return
@@ -353,6 +362,8 @@ public final class AppStore {
     }
 
     func removeRoutingOverride(domain: String) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         guard let profileID = selectedManagedProfileID else {
             return
         }
@@ -367,18 +378,34 @@ public final class AppStore {
     }
 
     public func toggleRuntime(configPath: String) async {
+        guard !isRuntimeTransitioning else { return }
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         if isStarted {
             await stopRuntime(userInitiated: true)
             return
         }
+        _ = await startRuntime(configPath: configPath)
+    }
 
+    private func startRuntime(configPath: String) async -> Bool {
+        runtimeGeneration += 1
         let requestedMode = stagedOutboundMode
+        let requestedTun = stagedTunEnabled
         guard await ensureControllerAvailable(configPath: configPath) else {
-            return
+            return false
         }
         if let requestedMode,
            !(await applyOutboundModeToController(requestedMode)) {
-            return
+            return false
+        }
+        if let requestedTun,
+           !(await applyTunToController(requestedTun)) {
+            return false
+        }
+        guard coreService.isProcessRunning else {
+            handleCoreFailure(coreService.status.failureMessage ?? "Mihomo exited unexpectedly.")
+            return false
         }
 
         isStarted = true
@@ -388,13 +415,20 @@ public final class AppStore {
         latestDownloadBytesPerSecond = 0
         startTrafficStream()
         await refreshRuntimeConfiguration()
-        await refreshProxies()
+        await fetchProxies()
         await refreshConnections()
+        guard coreService.isProcessRunning else {
+            handleCoreFailure(coreService.status.failureMessage ?? "Mihomo exited unexpectedly.")
+            return false
+        }
         await applySystemProxy(enabled: true, service: networkService)
         await refreshNetworkIdentity()
+        return isStarted && lastErrorMessage == nil
     }
 
     public func shutdownRuntime() async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         if isStarted {
             await stopRuntime(userInitiated: true)
         } else if isCoreRunning {
@@ -403,6 +437,9 @@ public final class AppStore {
     }
 
     public func restartCore() async {
+        guard !isRuntimeTransitioning else { return }
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         let intent = CoreRestartIntent.resolve(
             isStarted: isStarted,
             isCoreRunning: isCoreRunning
@@ -414,23 +451,23 @@ public final class AppStore {
             guard await ensureControllerAvailable(configPath: configPath) else {
                 return
             }
-            if selectedMode != activeMode {
-                _ = await applyOutboundModeToController(activeMode)
+            if confirmedOutboundMode != activeMode {
+                guard await applyOutboundModeToController(activeMode) else { return }
             }
-            await refreshProxies()
+            await fetchProxies()
         case .restartController:
             await stopControllerOnly(userInitiated: true)
             guard await ensureControllerAvailable(configPath: configPath) else {
                 return
             }
-            if selectedMode != activeMode {
-                _ = await applyOutboundModeToController(activeMode)
+            if confirmedOutboundMode != activeMode {
+                guard await applyOutboundModeToController(activeMode) else { return }
             }
-            await refreshProxies()
+            await fetchProxies()
         case .restartActiveRuntime:
             stagedOutboundMode = activeMode
             await stopRuntime(userInitiated: true)
-            await toggleRuntime(configPath: configPath)
+            _ = await startRuntime(configPath: configPath)
         }
     }
 
@@ -450,6 +487,7 @@ public final class AppStore {
     }
 
     public func toggleSystemProxy(service: String = "Wi-Fi") async {
+        guard !isRuntimeTransitioning else { return }
         guard isStarted else {
             isSystemProxyEnabled.toggle()
             return
@@ -481,8 +519,10 @@ public final class AppStore {
             return
         }
         isApplyingOutboundMode = true
+        await beginRuntimeTransition()
         defer {
             isApplyingOutboundMode = false
+            endRuntimeTransition()
         }
         while let requestedMode = pendingOutboundMode {
             pendingOutboundMode = nil
@@ -503,17 +543,17 @@ public final class AppStore {
     }
 
     public func setTunEnabled(_ enabled: Bool) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         let previousValue = isTunEnabled
         isTunEnabled = enabled
         guard isStarted else {
+            stagedTunEnabled = enabled
+            lastErrorMessage = nil
             return
         }
-        do {
-            _ = try await apiService.data(for: .updateConfigs(mode: nil, tunEnabled: enabled))
-            lastErrorMessage = nil
-        } catch {
+        if !(await applyTunToController(enabled)) {
             isTunEnabled = previousValue
-            lastErrorMessage = error.localizedDescription
         }
     }
 
@@ -527,6 +567,8 @@ public final class AppStore {
     }
 
     public func selectProxyRemote(groupName: String, nodeName: String) async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
         guard await ensureControllerAvailable(configPath: configPath) else {
             return
         }
@@ -539,15 +581,12 @@ public final class AppStore {
             lastErrorMessage = "This automatic group cannot be manually locked without a parent selector."
             return
         }
-        let previousGroups = proxyGroups
-        for targetGroup in targetGroups {
-            selectProxy(groupName: targetGroup, nodeName: nodeName)
-        }
         do {
             for targetGroup in targetGroups {
                 _ = try await apiService.data(
                     for: .changeProxy(group: targetGroup, proxy: nodeName)
                 )
+                selectProxy(groupName: targetGroup, nodeName: nodeName)
                 if let profileID = selectedManagedProfileID {
                     try proxySelectionRepository.save(
                         selector: targetGroup,
@@ -558,13 +597,17 @@ public final class AppStore {
             }
             _ = try await apiService.data(for: .closeAllConnections)
             lastErrorMessage = nil
-            await refreshProxies()
+            await fetchProxies()
             if isStarted {
                 await refreshNetworkIdentity()
             }
         } catch {
-            proxyGroups = previousGroups
-            lastErrorMessage = error.localizedDescription
+            let message = error.localizedDescription
+            // A later failure (including closing old connections) cannot undo a
+            // selector change already accepted by the controller.
+            await fetchProxies()
+            lastErrorMessage = message
+            if isStarted { await refreshNetworkIdentity() }
         }
     }
 
@@ -572,7 +615,12 @@ public final class AppStore {
         guard !isLatencyTesting else {
             return
         }
-        guard await ensureControllerAvailable(configPath: configPath) else {
+        isLatencyTesting = true
+        defer { isLatencyTesting = false }
+        await beginRuntimeTransition()
+        let controllerAvailable = await ensureControllerAvailable(configPath: configPath)
+        endRuntimeTransition()
+        guard controllerAvailable else {
             return
         }
         let settings = latencyTestSettings
@@ -582,16 +630,13 @@ public final class AppStore {
             lastErrorMessage = "No concrete proxy nodes are available for latency testing."
             return
         }
-        isLatencyTesting = true
+        let generation = runtimeGeneration
         latencyTestProgress = LatencyTestProgress(completed: 0, total: plan.nodeNames.count)
         for groupIndex in proxyGroups.indices {
             for nodeIndex in proxyGroups[groupIndex].nodes.indices
             where plan.nodeNames.contains(proxyGroups[groupIndex].nodes[nodeIndex].name) {
                 proxyGroups[groupIndex].nodes[nodeIndex].latency = nil
             }
-        }
-        defer {
-            isLatencyTesting = false
         }
 
         var successfulNodeNames = Set<String>()
@@ -603,6 +648,7 @@ public final class AppStore {
             delays: [String: Int],
             completed names: Set<String>
         ) {
+            guard generation == runtimeGeneration else { return }
             completedNodeNames.formUnion(names)
             latencyTestProgress = LatencyTestProgress(
                 completed: completedNodeNames.count,
@@ -686,6 +732,7 @@ public final class AppStore {
                 }
             }
         }
+        guard generation == runtimeGeneration else { return }
         lastErrorMessage = !successfulNodeNames.isEmpty
             ? nil
             : "No proxy returned a successful delay measurement."
@@ -716,56 +763,69 @@ public final class AppStore {
     }
 
     public func refreshRuntimeConfiguration() async {
+        let generation = runtimeGeneration
         do {
             let data = try await apiService.data(for: .configs)
             let config = try MihomoAPIDecoder.runtimeConfig(from: data)
+            guard generation == runtimeGeneration else { return }
             if let mixedPort = config.mixedPort {
                 httpPort = mixedPort
                 socksPort = mixedPort
             }
-            selectedMode = config.mode
+            selectedMode = stagedOutboundMode ?? config.mode
             confirmedOutboundMode = config.mode
-            isTunEnabled = config.tunEnabled
+            isTunEnabled = stagedTunEnabled ?? config.tunEnabled
             lastErrorMessage = nil
         } catch {
+            guard generation == runtimeGeneration else { return }
             lastErrorMessage = error.localizedDescription
         }
     }
 
     public func runtimeTick() async {
-        guard isStarted else {
+        guard !isRuntimeTransitioning, isCoreRunning || isStarted else {
             return
         }
         guard coreService.isProcessRunning else {
-            stopTrafficStream()
-            isStarted = false
-            isCoreRunning = false
-            coreStatus = .failed("Mihomo exited unexpectedly.")
-            await restorePreviousSystemProxy()
+            handleCoreFailure(coreService.status.failureMessage ?? "Mihomo exited unexpectedly.")
             return
         }
+        guard isStarted else { return }
+        let generation = runtimeGeneration
         runtimeTickCount += 1
         advanceSpeedGraph()
         if runtimeTickCount.isMultiple(of: 4) {
             await refreshConnections()
         }
+        guard generation == runtimeGeneration, !isRuntimeTransitioning, isStarted else { return }
         if runtimeTickCount.isMultiple(of: 10) {
             await refreshRuntimeConfiguration()
         }
+        guard generation == runtimeGeneration, !isRuntimeTransitioning, isStarted else { return }
         if runtimeTickCount.isMultiple(of: 20) {
             await refreshNetworkIdentity()
         }
     }
 
     public func refreshProxies() async {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        guard !Task.isCancelled else { return }
         guard await ensureControllerAvailable(configPath: configPath) else {
             return
         }
+        await fetchProxies()
+    }
+
+    private func fetchProxies() async {
+        let generation = runtimeGeneration
         do {
             let data = try await apiService.data(for: .proxies)
+            guard generation == runtimeGeneration else { return }
             applyProxyResponse(data)
             lastErrorMessage = nil
         } catch {
+            guard generation == runtimeGeneration else { return }
             lastErrorMessage = error.localizedDescription
         }
     }
@@ -782,11 +842,14 @@ public final class AppStore {
         guard isStarted else {
             return
         }
+        let generation = runtimeGeneration
         do {
             let data = try await apiService.data(for: .connections)
+            guard generation == runtimeGeneration, isStarted else { return }
             applyConnectionsResponse(data)
             lastErrorMessage = nil
         } catch {
+            guard generation == runtimeGeneration, isStarted else { return }
             lastErrorMessage = error.localizedDescription
         }
     }
@@ -809,9 +872,7 @@ public final class AppStore {
                         ?? groups[groupIndex].nodes[nodeIndex].latency
                 }
             }
-            if !groups.isEmpty {
-                proxyGroups = groups
-            }
+            proxyGroups = groups
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -822,8 +883,12 @@ public final class AppStore {
         do {
             let snapshot = try MihomoAPIDecoder.connectionsSnapshot(from: data)
             connections = snapshot.entries
-            let upload = Self.trafficAmount(snapshot.uploadTotal)
-            let download = Self.trafficAmount(snapshot.downloadTotal)
+            trafficUsageTotals = TrafficUsageTotals(
+                uploadBytes: snapshot.uploadTotal,
+                downloadBytes: snapshot.downloadTotal
+            )
+            let upload = Self.trafficAmount(trafficUsageTotals.uploadBytes)
+            let download = Self.trafficAmount(trafficUsageTotals.downloadBytes)
             uploadTotalText = upload.value
             uploadTrafficUnit = upload.unit
             downloadTotalText = download.value
@@ -864,7 +929,7 @@ public final class AppStore {
                 previousSystemProxySnapshot = try? systemProxyService.capture(service: service)
             }
             if !enabled {
-                await restorePreviousSystemProxy()
+                restorePreviousSystemProxy()
                 return
             }
             let command = enabled
@@ -880,14 +945,26 @@ public final class AppStore {
     }
 
     public func refreshNetworkIdentity() async {
+        networkIdentityGeneration += 1
+        let requestGeneration = networkIdentityGeneration
+        let runtime = runtimeGeneration
+        let shouldFetchViaProxy = isStarted
+        let requestedHost = proxyHost
+        let requestedPort = httpPort
+        isRefreshingNetworkIdentity = true
+        defer {
+            if requestGeneration == networkIdentityGeneration {
+                isRefreshingNetworkIdentity = false
+            }
+        }
+        func isCurrentRequest() -> Bool {
+            !Task.isCancelled && requestGeneration == networkIdentityGeneration
+                && runtime == runtimeGeneration && shouldFetchViaProxy == isStarted
+                && requestedHost == proxyHost && requestedPort == httpPort
+        }
         if let localIP = networkIdentityService.localIPv4Address() {
             intranetIP = localIP
         }
-        let shouldFetchViaProxy = isStarted
-        externalIP = "Detecting..."
-        networkCountryCode = ""
-        networkCountryName = ""
-        networkEgressKind = .detecting
         let directEgressKind: NetworkEgressKind = if await networkIdentityService.hasActiveSystemTunnel() {
             .systemTunnel
         } else {
@@ -895,18 +972,21 @@ public final class AppStore {
         }
         do {
             let identity: NetworkIdentity
+            let resolvedEgress: NetworkEgressKind
             if shouldFetchViaProxy {
                 do {
-                    networkEgressKind = .proxy
-                    identity = try await networkIdentityService.fetchViaProxy(host: proxyHost, port: httpPort)
+                    identity = try await networkIdentityService.fetchViaProxy(host: requestedHost, port: requestedPort)
+                    resolvedEgress = .proxy
                 } catch {
-                    networkEgressKind = directEgressKind
+                    guard isCurrentRequest() else { return }
                     identity = try await networkIdentityService.fetchDirect()
+                    resolvedEgress = directEgressKind
                 }
             } else {
-                networkEgressKind = directEgressKind
                 identity = try await networkIdentityService.fetchDirect()
+                resolvedEgress = directEgressKind
             }
+            guard isCurrentRequest() else { return }
             guard NetworkAddressPolicy.isIPv4(identity.ip) else {
                 throw NetworkIdentityError.invalidResponse(
                     "The network identity service returned IPv6."
@@ -915,7 +995,9 @@ public final class AppStore {
             externalIP = identity.ip
             networkCountryCode = identity.countryCode
             networkCountryName = identity.countryName
+            networkEgressKind = resolvedEgress
         } catch {
+            guard isCurrentRequest() else { return }
             externalIP = "Unavailable"
             networkCountryCode = ""
             networkCountryName = ""
@@ -1025,6 +1107,84 @@ public final class AppStore {
         trafficStreamTask = nil
     }
 
+    // Profile imports queue so a multi-file drop is not lost; repeated start taps are ignored.
+    private func beginRuntimeTransition() async {
+        if isRuntimeTransitioning {
+            await withCheckedContinuation { runtimeTransitionWaiters.append($0) }
+        } else {
+            isRuntimeTransitioning = true
+        }
+    }
+
+    private func endRuntimeTransition() {
+        if runtimeTransitionWaiters.isEmpty {
+            isRuntimeTransitioning = false
+        } else {
+            runtimeTransitionWaiters.removeFirst().resume()
+        }
+    }
+
+    private func activateManagedProfile(_ profile: ManagedProfile) async -> Bool {
+        guard profile.id != selectedManagedProfileID else { return true }
+        let wasStarted = isStarted
+        let wasCoreRunning = isCoreRunning || coreService.isProcessRunning
+        do {
+            // Check the source before taking down a working connection.
+            _ = try MihomoConfigurationInspector.inspect(url: profile.managedConfigURL)
+            if wasStarted {
+                await stopRuntime(userInitiated: true)
+            } else if wasCoreRunning {
+                await stopControllerOnly(userInitiated: true)
+            }
+            try profileRepository.select(profile.id)
+            reloadManagedProfiles()
+            reloadRoutingOverrides()
+            stagedOutboundMode = nil
+            stagedTunEnabled = nil
+            proxyGroups = []
+            menuBarPreferredGroupName = nil
+            connections = []
+            runtimeGeneration += 1
+            synchronizeConfiguration(from: profile.managedConfigURL)
+            lastErrorMessage = nil
+            if wasStarted {
+                return await startRuntime(configPath: configPath)
+            }
+            if wasCoreRunning {
+                guard await ensureControllerAvailable(configPath: configPath) else { return false }
+                await fetchProxies()
+            }
+            return true
+        } catch {
+            reloadManagedProfiles()
+            lastErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func handleCoreFailure(_ message: String) {
+        runtimeGeneration += 1
+        if isCoreRunning || isStarted {
+            stagedOutboundMode = stagedOutboundMode ?? confirmedOutboundMode
+        }
+        if isStarted {
+            stagedTunEnabled = isTunEnabled
+        }
+        stopTrafficStream()
+        isStarted = false
+        isCoreRunning = false
+        coreStatus = .failed(message)
+        runtimeTickCount = 0
+        latestUploadBytesPerSecond = 0
+        latestDownloadBytesPerSecond = 0
+        uploadSpeedText = "0B/s"
+        downloadSpeedText = "0B/s"
+        speedSamples = Array(repeating: 0, count: 28)
+        connections = []
+        restorePreviousSystemProxy()
+        lastErrorMessage = message
+    }
+
     private func reloadManagedProfiles() {
         do {
             managedProfiles = try profileRepository.loadProfiles()
@@ -1093,6 +1253,24 @@ public final class AppStore {
         }
     }
 
+    private func applyTunToController(_ enabled: Bool) async -> Bool {
+        do {
+            _ = try await apiService.data(for: .updateConfigs(mode: nil, tunEnabled: enabled))
+            let data = try await apiService.data(for: .configs)
+            let config = try MihomoAPIDecoder.runtimeConfig(from: data)
+            guard config.tunEnabled == enabled else {
+                throw TunRuntimeError.settingNotApplied(enabled)
+            }
+            isTunEnabled = config.tunEnabled
+            stagedTunEnabled = nil
+            lastErrorMessage = nil
+            return true
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     private func synchronizeConfiguration(from url: URL) {
         do {
             let settings = try MihomoConfigurationInspector.inspect(url: url)
@@ -1124,9 +1302,9 @@ public final class AppStore {
         )
         do {
             let settings = try MihomoConfigurationInspector.inspect(url: prepared.configURL)
-            selectedMode = settings.mode
+            selectedMode = stagedOutboundMode ?? settings.mode
             confirmedOutboundMode = settings.mode
-            isTunEnabled = settings.tunEnabled
+            isTunEnabled = stagedTunEnabled ?? settings.tunEnabled
         } catch {
             lastErrorMessage = error.localizedDescription
         }
@@ -1146,6 +1324,8 @@ public final class AppStore {
             await coreService.stop(userInitiated: false)
         }
 
+        runtimeGeneration += 1
+
         do {
             let sourceURL: URL
             if let selectedManagedProfile {
@@ -1160,7 +1340,7 @@ public final class AppStore {
             )
             applyPreparedRuntimeConfiguration(prepared)
         } catch {
-            lastErrorMessage = error.localizedDescription
+            handleCoreFailure(error.localizedDescription)
             return false
         }
 
@@ -1183,7 +1363,7 @@ public final class AppStore {
                     .map(String.init)
                 ?? "Mihomo controller did not become ready at \(controllerURL.absoluteString)."
             await coreService.stop(userInitiated: false)
-            coreStatus = coreService.status
+            coreStatus = .failed(failure)
             isStarted = false
             isCoreRunning = false
             lastErrorMessage = failure
@@ -1195,6 +1375,10 @@ public final class AppStore {
         isCoreRunning = true
         isStarted = false
         await restoreSavedProxySelections()
+        guard coreService.isProcessRunning else {
+            handleCoreFailure(coreService.status.failureMessage ?? "Mihomo exited unexpectedly.")
+            return false
+        }
         lastErrorMessage = nil
         return true
     }
@@ -1209,8 +1393,7 @@ public final class AppStore {
         if wasStarted {
             stagedOutboundMode = activeMode
             await stopRuntime(userInitiated: true)
-            await toggleRuntime(configPath: configPath)
-            if !isStarted {
+            if !(await startRuntime(configPath: configPath)) {
                 throw RoutingRuntimeError.restartFailed(
                     lastErrorMessage ?? "Mihomo did not restart with the new routing rules."
                 )
@@ -1222,13 +1405,13 @@ public final class AppStore {
                     lastErrorMessage ?? "Mihomo controller did not restart with the new routing rules."
                 )
             }
-            if selectedMode != activeMode,
+            if confirmedOutboundMode != activeMode,
                !(await applyOutboundModeToController(activeMode)) {
                 throw RoutingRuntimeError.restartFailed(
                     lastErrorMessage ?? "Mihomo did not restore the active outbound mode."
                 )
             }
-            await refreshProxies()
+            await fetchProxies()
         }
     }
 
@@ -1243,8 +1426,11 @@ public final class AppStore {
     }
 
     private func stopRuntime(userInitiated: Bool) async {
+        runtimeGeneration += 1
+        stagedOutboundMode = stagedOutboundMode ?? confirmedOutboundMode
+        stagedTunEnabled = isTunEnabled
         stopTrafficStream()
-        await restorePreviousSystemProxy()
+        restorePreviousSystemProxy()
         await coreService.stop(userInitiated: userInitiated)
         coreStatus = coreService.status
         isStarted = false
@@ -1260,6 +1446,7 @@ public final class AppStore {
     }
 
     private func stopControllerOnly(userInitiated: Bool) async {
+        runtimeGeneration += 1
         stopTrafficStream()
         await coreService.stop(userInitiated: userInitiated)
         coreStatus = coreService.status
@@ -1268,7 +1455,7 @@ public final class AppStore {
         runtimeTickCount = 0
     }
 
-    private func restorePreviousSystemProxy() async {
+    private func restorePreviousSystemProxy() {
         guard let previousSystemProxySnapshot else {
             isSystemProxyEnabled = false
             return
@@ -1306,6 +1493,17 @@ private enum OutboundModeRuntimeError: Error, LocalizedError {
         switch self {
         case let .modeMismatch(requested, effective):
             "Mihomo kept \(effective.title) mode instead of \(requested.title)."
+        }
+    }
+}
+
+private enum TunRuntimeError: Error, LocalizedError {
+    case settingNotApplied(Bool)
+
+    var errorDescription: String? {
+        switch self {
+        case let .settingNotApplied(enabled):
+            "Mihomo did not \(enabled ? "enable" : "disable") TUN."
         }
     }
 }

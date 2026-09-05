@@ -494,7 +494,7 @@ import Testing
     #expect(PageNavigationTransitionPolicy.animatesTitleChange)
     #expect(!PageNavigationTransitionPolicy.crossfadesFeatureContent)
     #expect(PageNavigationTransitionPolicy.respectsReducedMotion)
-    #expect(PageNavigationTransitionPolicy.duration == 0.16)
+    #expect(PageNavigationTransitionPolicy.duration == 0.20)
 }
 
 @Test func appMotionPolicyCombinesSystemAndAppPreferences() {
@@ -577,73 +577,37 @@ import Testing
     let selected = RailItemPresentation(
         item: dashboard,
         selectedSection: .dashboard,
-        hoveredItem: nil,
-        reduceMotion: false
+        hoveredItem: nil
     )
     let idle = RailItemPresentation(
         item: profiles,
         selectedSection: .dashboard,
-        hoveredItem: nil,
-        reduceMotion: false
+        hoveredItem: nil
     )
     let hovered = RailItemPresentation(
         item: profiles,
         selectedSection: .dashboard,
-        hoveredItem: profiles,
-        reduceMotion: false
+        hoveredItem: profiles
     )
 
-    #expect(selected.showsSelectionBackground)
-    #expect(selected.scale == 1)
-    #expect(!idle.showsSelectionBackground)
-    #expect(idle.scale == 1)
-    #expect(!hovered.showsSelectionBackground)
-    #expect(hovered.scale == 1)
+    #expect(selected.isSelected)
+    #expect(selected.emphasizesIcon)
+    #expect(!idle.isSelected)
+    #expect(!idle.emphasizesIcon)
+    #expect(!hovered.isSelected)
+    #expect(hovered.emphasizesIcon)
 }
 
-@Test func railItemsUseQuietHoverWithoutLayoutMotion() {
-    let dashboard = RailItem.section(.dashboard)
-    let profiles = RailItem.section(.profiles)
-    let selected = RailItemPresentation(
-        item: dashboard,
-        selectedSection: .dashboard,
-        hoveredItem: nil,
-        reduceMotion: false
+@Test func railSelectionMotionSharesPageTimingAndRespectsReducedMotion() {
+    #expect(
+        RailSelectionMotion.animation(reduceMotion: false)
+            == PageNavigationTransitionPolicy.animation(reduceMotion: false)
     )
-    let hovered = RailItemPresentation(
-        item: profiles,
-        selectedSection: .dashboard,
-        hoveredItem: profiles,
-        reduceMotion: false
-    )
-    let reducedHover = RailItemPresentation(
-        item: profiles,
-        selectedSection: .dashboard,
-        hoveredItem: profiles,
-        reduceMotion: true
-    )
-
-    #expect(selected.iconScale == 1)
-    #expect(selected.horizontalOffset == 0)
-    #expect(!selected.showsHoverBackground)
-    #expect(hovered.showsHoverBackground)
-    #expect(hovered.scale == 1)
-    #expect(hovered.iconScale == 1.035)
-    #expect(hovered.horizontalOffset == 0)
-    #expect(hovered.verticalOffset == 0)
-    #expect(hovered.shadowOpacity == 0)
-    #expect(hovered.selectionGlowOpacity == 0.08)
-    #expect(reducedHover.scale == 1)
-    #expect(reducedHover.iconScale == 1)
-    #expect(reducedHover.horizontalOffset == 0)
-    #expect(reducedHover.showsHoverBackground)
+    #expect(RailSelectionMotion.animation(reduceMotion: false) != nil)
+    #expect(RailSelectionMotion.animation(reduceMotion: true) == nil)
 }
 
 @Test func railSelectionFollowsEveryNavigationEntryPoint() {
-    #expect(RailSelectionMotion.appliesToExternalSectionChanges)
-    #expect(RailSelectionMotion.usesMatchedGeometry)
-    #expect(RailSelectionMotion.respectsReducedMotion)
-
     #expect(RailSelectionResolver.item(for: .dashboard) == .section(.dashboard))
     #expect(RailSelectionResolver.item(for: .proxies) == .section(.proxies))
     #expect(RailSelectionResolver.item(for: .routing) == .section(.routing))

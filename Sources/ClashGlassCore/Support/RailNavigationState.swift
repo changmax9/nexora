@@ -15,6 +15,18 @@ enum RailHitTargetMetrics {
     static let height = 48.0
 }
 
+enum RailLayoutMetrics {
+    static let itemSpacing = 4.0
+    static let topInset = 46.0
+    static let selectionWidth = 54.0
+    static let selectionHeight = 30.0
+
+    static func selectionOffset(for section: AppSection) -> Double {
+        let index = AppSection.allCases.firstIndex(of: section) ?? 0
+        return Double(index) * (RailHitTargetMetrics.height + itemSpacing)
+    }
+}
+
 enum RailItem: Equatable {
     case section(AppSection)
 }
@@ -41,14 +53,8 @@ enum RailSelectionResolver {
 }
 
 enum RailSelectionMotion {
-    static let appliesToExternalSectionChanges = true
-    static let usesMatchedGeometry = true
-    static let respectsReducedMotion = true
-
     static func animation(reduceMotion: Bool) -> Animation? {
-        reduceMotion
-            ? nil
-            : .spring(response: 0.42, dampingFraction: 0.80)
+        PageNavigationTransitionPolicy.animation(reduceMotion: reduceMotion)
     }
 }
 
@@ -65,45 +71,17 @@ struct RailHoverState {
 }
 
 struct RailItemPresentation {
-    let showsSelectionBackground: Bool
-    let showsHoverBackground: Bool
+    let isSelected: Bool
     let isHovered: Bool
-    let scale: Double
-    let iconScale: Double
-    let horizontalOffset: Double
-    let verticalOffset: Double
-    let brightness: Double
-    let shadowOpacity: Double
-    let selectionGlowOpacity: Double
+
+    var emphasizesIcon: Bool { isSelected || isHovered }
 
     init(
         item: RailItem,
         selectedSection: AppSection,
-        hoveredItem: RailItem?,
-        reduceMotion: Bool
+        hoveredItem: RailItem?
     ) {
-        let isSelected = item == RailSelectionResolver.item(for: selectedSection)
-        showsSelectionBackground = isSelected
+        isSelected = item == RailSelectionResolver.item(for: selectedSection)
         isHovered = hoveredItem == item
-        showsHoverBackground = isHovered && !isSelected
-
-        scale = 1
-        if reduceMotion {
-            iconScale = 1
-            horizontalOffset = 0
-        } else if isHovered {
-            iconScale = 1.035
-            horizontalOffset = 0
-        } else if isSelected {
-            iconScale = 1
-            horizontalOffset = 0
-        } else {
-            iconScale = 1
-            horizontalOffset = 0
-        }
-        verticalOffset = 0
-        brightness = isHovered ? 0.012 : 0
-        shadowOpacity = 0
-        selectionGlowOpacity = isHovered ? 0.08 : isSelected ? 0.075 : 0
     }
 }

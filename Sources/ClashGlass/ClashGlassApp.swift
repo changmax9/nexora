@@ -35,6 +35,14 @@ struct ClashGlassApp: App {
             width: CGFloat(MainWindowLayoutMetrics.defaultWidth),
             height: CGFloat(MainWindowLayoutMetrics.defaultHeight)
         )
+        .commands {
+            CommandGroup(after: .windowArrangement) {
+                Button(store.text(.menuQuickAccess)) {
+                    appDelegate.toggleQuickAccess()
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            }
+        }
     }
 }
 
@@ -71,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
 
     func applicationWillTerminate(_ notification: Notification) {
         store?.shutdownForApplicationTermination()
+    }
+
+    func toggleQuickAccess() {
+        menuBarPanelController?.togglePanel()
     }
 
     private func configureWindowsWhenReady() {
