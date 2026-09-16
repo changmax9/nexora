@@ -19,9 +19,9 @@ Enabling TUN registers the service. macOS may require approval in System Setting
 
 ## Verification status
 
-Configuration boundary and lifecycle regression tests pass, including denied approval, failed privileged startup, and return to an ordinary process. Installed application/helper/core signatures were verified. Actual SMAppService approval, virtual interface creation, DNS/routing, and external connectivity remain pending live testing. This local Apple Development signed build is not a notarized distribution release.
+Configuration boundary and lifecycle regression tests pass, including denied approval, failed privileged startup, and return to an ordinary process. Installed application/helper/core signatures were verified. SMAppService approval, virtual interface creation, DNS/routing, and external connectivity have been tested on this Mac. This local Apple Development signed build is not a notarized distribution release.
 
-Live follow-up: macOS approval and signed root-helper/core launch are verified. Resolve the helper using the executable bundle URL, not argv[0], because launchd supplies a relative BundleProgram. Independent TUN connectivity remains unverified while FlClash owns the routes. Runtime errors now identify an existing TUN route conflict rather than only reporting that TUN was not enabled.
+Live follow-up: macOS approval and signed root-helper/core launch are verified. Resolve the helper using the executable bundle URL, not argv[0], because launchd supplies a relative BundleProgram. With FlClash's TUN disabled, gVisor mode created utun6 and direct Apple/Google HTTPS checks succeeded. Runtime errors now identify an existing TUN route conflict rather than only reporting that TUN was not enabled.
 
 ## Packaging
 
