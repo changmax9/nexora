@@ -89,7 +89,7 @@ public struct NetworkPortTarget: Equatable, Sendable {
 }
 
 public struct NetworkPortCheck: Equatable, Identifiable, Sendable {
-    public var id: Int { port }
+    public var id: String { "\(label):\(port)" }
     public let label: String
     public let port: Int
     public let isListening: Bool

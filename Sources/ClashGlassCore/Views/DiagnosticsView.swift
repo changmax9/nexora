@@ -358,7 +358,7 @@ private struct PortRadarRow: View {
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(palette.primaryText)
                 .lineLimit(1)
-            Text(":\(check.port)")
+            Text(verbatim: ":\(check.port)")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .foregroundStyle(palette.secondaryText)
             Spacer(minLength: 8)

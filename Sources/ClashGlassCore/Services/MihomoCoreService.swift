@@ -34,14 +34,38 @@ public final class MihomoCoreService {
     private var outputPipe: Pipe?
     private var outputSink: CoreOutputSink?
     private var pidFileURL: URL?
+    private let privilegedTUN: (any PrivilegedTUNRuntime)?
     var onUnexpectedTermination: (@MainActor (String) -> Void)?
 
     public var isProcessRunning: Bool {
-        process?.isRunning == true
+        process?.isRunning == true || privilegedTUN?.isRunning == true
     }
 
-    public init(coreBinaryURL: URL? = MihomoCoreService.defaultCoreBinaryURL()) {
+    public var supportsPrivilegedTUN: Bool { privilegedTUN != nil }
+    public var isPrivilegedRunning: Bool { privilegedTUN?.isRunning == true }
+    public func authorizeTUN() throws { try privilegedTUN?.authorize() }
+    public func tunStartupFailure() async -> String? {
+        guard let privilegedTUN, privilegedTUN.isRunning else { return nil }
+        let output = await privilegedTUN.runtimeOutput()
+        recentOutput = output
+        guard let failure = output.split(whereSeparator: \.isNewline).last(where: {
+            $0.contains("Start TUN listening error")
+        }) else { return nil }
+        if failure.contains("add route"), failure.contains("file exists") {
+            return "Another VPN or TUN connection already owns the required routes. Turn off its TUN mode before enabling Nexora TUN."
+        }
+        return String(failure)
+    }
+
+    public init(coreBinaryURL: URL? = MihomoCoreService.defaultCoreBinaryURL(), privilegedTUN: (any PrivilegedTUNRuntime)? = PrivilegedTUNService()) {
         self.coreBinaryURL = coreBinaryURL
+        self.privilegedTUN = privilegedTUN
+        privilegedTUN?.onUnexpectedTermination = { [weak self] message in
+            guard let self, self.status != .stopped else { return }
+            self.recentOutput = message
+            self.status = .failed(message)
+            self.onUnexpectedTermination?(message)
+        }
     }
 
     public nonisolated static func defaultCoreBinaryURL() -> URL? {
@@ -83,7 +107,8 @@ public final class MihomoCoreService {
 
     public func start(
         configPath: String,
-        runtimeDirectoryURL: URL? = nil
+        runtimeDirectoryURL: URL? = nil,
+        useTUN: Bool = false
     ) async {
         guard let coreBinaryURL else {
             status = .missingCoreBinary
@@ -107,6 +132,11 @@ public final class MihomoCoreService {
 
         status = .starting
         recentOutput = ""
+        if useTUN, let privilegedTUN {
+            do { try await privilegedTUN.start(configuration: Data(contentsOf: URL(fileURLWithPath: configPath))) }
+            catch { status = .failed(error.localizedDescription) }
+            return
+        }
         let runtimeDirectoryURL = runtimeDirectoryURL
             ?? URL(fileURLWithPath: configPath).deletingLastPathComponent()
         try? FileManager.default.createDirectory(
@@ -181,7 +211,7 @@ public final class MihomoCoreService {
     }
 
     public func markRunning() {
-        guard process?.isRunning == true else {
+        guard isProcessRunning else {
             return
         }
         status = .running
@@ -189,6 +219,7 @@ public final class MihomoCoreService {
 
     public func stop(userInitiated: Bool) async {
         status = .stopped
+        await privilegedTUN?.stop()
         let processID = process?.processIdentifier
         if process?.isRunning == true {
             process?.terminate()
@@ -201,6 +232,7 @@ public final class MihomoCoreService {
 
     public func stopImmediately() {
         status = .stopped
+        privilegedTUN?.invalidate()
         let processID = process?.processIdentifier
         if process?.isRunning == true {
             process?.terminate()

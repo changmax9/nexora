@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import ClashGlassCore
 
+@Test func sharedProxyPortKeepsDistinctDiagnosticRows() {
+    let http = NetworkPortCheck(label: "HTTP Proxy", port: 7890, isListening: true)
+    let socks = NetworkPortCheck(label: "Socks Proxy", port: 7890, isListening: true)
+    #expect(http.id != socks.id)
+    #expect(http.id == NetworkPortCheck(label: "HTTP Proxy", port: 7890, isListening: false).id)
+}
+
 @Test func dashboardUsesTheSamePageInsetsAsFeatureScreens() {
     let metrics = DashboardPageMetrics(availableWidth: 854)
 

@@ -8,17 +8,22 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "Nexora", targets: ["ClashGlass"])
+        .executable(name: "Nexora", targets: ["ClashGlass"]),
+        .executable(name: "NexoraTUNHelper", targets: ["NexoraTUNHelper"])
     ],
     dependencies: [
+        .package(url: "https://github.com/jpsim/Yams.git", exact: "5.1.3"),
         .package(
             url: "https://github.com/sparkle-project/Sparkle",
             exact: "2.9.3"
         )
     ],
     targets: [
+        .target(name: "NexoraTUNSupport", dependencies: [.product(name: "Yams", package: "Yams")]),
+        .executableTarget(name: "NexoraTUNHelper", dependencies: ["NexoraTUNSupport"]),
         .target(
             name: "ClashGlassCore",
+            dependencies: ["NexoraTUNSupport"],
             path: "Sources/ClashGlassCore"
         ),
         .executableTarget(
@@ -31,7 +36,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ClashGlassTests",
-            dependencies: ["ClashGlassCore"],
+            dependencies: ["ClashGlassCore", "NexoraTUNSupport"],
             path: "Tests/ClashGlassTests"
         )
     ]

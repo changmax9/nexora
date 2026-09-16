@@ -44,7 +44,7 @@ final class MenuBarPanelController: NSObject {
 
         panel = MenuBarPanelWindow(
             contentRect: NSRect(origin: .zero, size: hostingView.fittingSize),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -58,7 +58,7 @@ final class MenuBarPanelController: NSObject {
         panel.isFloatingPanel = true
         panel.level = .popUpMenu
         panel.animationBehavior = .none
-        panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.transient, .canJoinAllSpaces, .fullScreenAuxiliary]
         panel.alphaValue = 0
         panel.onCancel = { [weak self] in self?.hide() }
 
@@ -95,7 +95,7 @@ final class MenuBarPanelController: NSObject {
         positionPanel(below: statusFrame)
 
         panel.alphaValue = 0
-        NSApp.activate(ignoringOtherApps: true)
+        // Keep the current full-screen Space active while allowing panel keyboard input.
         panel.orderFrontRegardless()
         panel.makeKey()
         // Opening the panel should not begin editing the first text field.

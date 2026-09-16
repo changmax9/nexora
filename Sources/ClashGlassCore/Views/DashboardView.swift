@@ -257,6 +257,8 @@ private struct ToggleStatusCard: View {
                 Spacer(minLength: 2)
 
                 LiquidToggle(isOn: isOn, action: action)
+                    .accessibilityLabel(title)
+                    .accessibilityAddTraits(isOn ? .isSelected : [])
                     .scaleEffect(0.86)
                     .frame(width: 48, height: 30)
             }

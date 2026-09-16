@@ -543,9 +543,28 @@ public final class AppStore {
     }
 
     public func setTunEnabled(_ enabled: Bool) async {
+        guard !isRuntimeTransitioning else { return }
         await beginRuntimeTransition()
         defer { endRuntimeTransition() }
         let previousValue = isTunEnabled
+        if isStarted, coreService.supportsPrivilegedTUN, enabled != previousValue {
+            if enabled {
+                do { try coreService.authorizeTUN() }
+                catch { lastErrorMessage = error.localizedDescription; return }
+            }
+            await stopRuntime(userInitiated: true)
+            stagedTunEnabled = enabled
+            isTunEnabled = enabled
+            if !(await startRuntime(configPath: configPath)) {
+                let failure = lastErrorMessage ?? "TUN could not start."
+                await coreService.stop(userInitiated: true)
+                stagedTunEnabled = previousValue
+                isTunEnabled = previousValue
+                _ = await startRuntime(configPath: configPath)
+                lastErrorMessage = failure
+            }
+            return
+        }
         isTunEnabled = enabled
         guard isStarted else {
             stagedTunEnabled = enabled
@@ -1259,6 +1278,9 @@ public final class AppStore {
             let data = try await apiService.data(for: .configs)
             let config = try MihomoAPIDecoder.runtimeConfig(from: data)
             guard config.tunEnabled == enabled else {
+                if enabled, let detail = await coreService.tunStartupFailure() {
+                    throw NSError(domain: "Nexora.TUN", code: 1, userInfo: [NSLocalizedDescriptionKey: detail])
+                }
                 throw TunRuntimeError.settingNotApplied(enabled)
             }
             isTunEnabled = config.tunEnabled
@@ -1312,7 +1334,13 @@ public final class AppStore {
 
     @discardableResult
     private func ensureControllerAvailable(configPath: String) async -> Bool {
+        let wantsPrivilegedTUN = (stagedTunEnabled ?? isTunEnabled) && coreService.supportsPrivilegedTUN
+        if wantsPrivilegedTUN, !coreService.isPrivilegedRunning {
+            do { try coreService.authorizeTUN() }
+            catch { lastErrorMessage = error.localizedDescription; return false }
+        }
         if coreService.isProcessRunning,
+           coreService.isPrivilegedRunning == wantsPrivilegedTUN,
            (try? await apiService.data(for: .version)) != nil {
             coreService.markRunning()
             coreStatus = coreService.status
@@ -1336,7 +1364,8 @@ public final class AppStore {
             let prepared = try runtimeConfigurationPreparer.prepare(
                 sourceURL: sourceURL,
                 runtimeDirectoryURL: profileRepository.runtimeDirectoryURL,
-                routingOverrides: routingOverrides
+                routingOverrides: routingOverrides,
+                privilegedTUN: wantsPrivilegedTUN
             )
             applyPreparedRuntimeConfiguration(prepared)
         } catch {
@@ -1346,7 +1375,8 @@ public final class AppStore {
 
         await coreService.start(
             configPath: self.configPath,
-            runtimeDirectoryURL: profileRepository.runtimeDirectoryURL
+            runtimeDirectoryURL: profileRepository.runtimeDirectoryURL,
+            useTUN: wantsPrivilegedTUN
         )
         coreStatus = coreService.status
         guard coreStatus == .starting else {

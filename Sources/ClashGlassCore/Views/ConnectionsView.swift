@@ -82,18 +82,23 @@ private struct ConnectionHeader: View {
     let language: AppLanguage
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 0) {
-            GridRow {
+        HStack(spacing: 12) {
+            Group {
                 HeaderText(language.text(.host))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 HeaderText(language.text(.rule))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 HeaderText(language.text(.chain))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 HeaderText(language.text(.upload))
+                    .frame(width: 64, alignment: .trailing)
                 HeaderText(language.text(.download))
-                HeaderText("")
+                    .frame(width: 64, alignment: .trailing)
+                Color.clear.frame(width: 32, height: 1)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 
@@ -106,24 +111,29 @@ struct ConnectionRow: View {
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 0) {
-            GridRow {
+        HStack(spacing: 12) {
+            Group {
                 Text(connection.host)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(connection.rule)
                     .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(connection.chain)
                     .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(connection.upload)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .frame(width: 64, alignment: .trailing)
                 Text(connection.download)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .frame(width: 64, alignment: .trailing)
                 if showsBlock {
                     LiquidIconButton(
                         title: closeTitle,
@@ -133,12 +143,13 @@ struct ConnectionRow: View {
                     ) {
                         closeAction?()
                     }
+                    .frame(width: 32)
                 }
             }
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 

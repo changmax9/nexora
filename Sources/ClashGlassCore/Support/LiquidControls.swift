@@ -490,7 +490,7 @@ struct LiquidToggle: View {
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        let activeTint = tint ?? palette.green
+        let activeTint = tint ?? .accentColor
         Button(action: action) {
             ZStack(alignment: isOn ? .trailing : .leading) {
                 Capsule(style: .continuous)

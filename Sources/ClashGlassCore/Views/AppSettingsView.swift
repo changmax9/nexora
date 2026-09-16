@@ -70,6 +70,8 @@ public struct AppSettingsView: View {
                     LiquidToggle(isOn: store.reduceMotion) {
                         store.reduceMotion.toggle()
                     }
+                    .accessibilityLabel(store.text(.reduceMotion))
+                    .accessibilityAddTraits(store.reduceMotion ? .isSelected : [])
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
@@ -85,8 +87,16 @@ public struct AppSettingsView: View {
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                     Spacer()
                     TextField(LatencyTestPlan.defaultTestURL, text: $latencyTestURLDraft)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .modifier(SettingsControlGlass())
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(isLatencyTestURLFocused ? Color.accentColor : .clear, lineWidth: 2)
+                        }
+                        .accessibilityLabel(store.text(.latencyTestURL))
                         .focused($isLatencyTestURLFocused)
                         .onSubmit(commitLatencyTestURL)
                         .onChange(of: isLatencyTestURLFocused) { _, isFocused in
@@ -105,16 +115,29 @@ public struct AppSettingsView: View {
                     Text(store.text(.latencyTestTimeout))
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                     Spacer()
-                    Stepper(
-                        value: $store.latencyTestTimeoutMilliseconds,
-                        in: LatencyTestSettings.minimumTimeoutMilliseconds...LatencyTestSettings.maximumTimeoutMilliseconds,
-                        step: 500
-                    ) {
+                    HStack(spacing: 10) {
+                        Button {
+                            store.latencyTestTimeoutMilliseconds -= 500
+                        } label: {
+                            Image(systemName: "minus").frame(width: 28, height: 28)
+                        }
+                        .disabled(store.latencyTestTimeoutMilliseconds <= LatencyTestSettings.minimumTimeoutMilliseconds)
+                        .accessibilityLabel("\(store.text(.latencyTestTimeout)) − 500 ms")
                         Text("\(store.latencyTestTimeoutMilliseconds) ms")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .monospacedDigit()
-                            .frame(width: 72, alignment: .trailing)
+                            .frame(width: 76)
+                        Button {
+                            store.latencyTestTimeoutMilliseconds += 500
+                        } label: {
+                            Image(systemName: "plus").frame(width: 28, height: 28)
+                        }
+                        .disabled(store.latencyTestTimeoutMilliseconds >= LatencyTestSettings.maximumTimeoutMilliseconds)
+                        .accessibilityLabel("\(store.text(.latencyTestTimeout)) + 500 ms")
                     }
+                    .buttonStyle(.plain)
+                    .padding(5)
+                    .modifier(SettingsControlGlass())
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
@@ -132,15 +155,28 @@ public struct AppSettingsView: View {
                 Text(store.text(.language))
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                 Spacer()
-                Picker("", selection: $store.language) {
-                    ForEach(AppLanguage.selectableCases) { language in
-                        Text(language.nativeDisplayName)
-                            .tag(language)
+                Menu {
+                    Picker(store.text(.language), selection: $store.language) {
+                        ForEach(AppLanguage.selectableCases) { language in
+                            Text(language.nativeDisplayName).tag(language)
+                        }
                     }
+                    .pickerStyle(.inline)
+                } label: {
+                    HStack(spacing: 10) {
+                        Text(store.language.nativeDisplayName).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
                 .frame(width: 190, alignment: .trailing)
+                .modifier(SettingsControlGlass())
+                .accessibilityLabel(store.text(.language))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
@@ -319,5 +355,15 @@ private struct SettingsLegalNotice: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
+    }
+}
+
+private struct SettingsControlGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: .rect(cornerRadius: 10))
+        } else {
+            content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
     }
 }

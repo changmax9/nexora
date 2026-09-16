@@ -7,6 +7,51 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RuntimeLifecycleRegressionTests {
+    @Test func deniedTUNApprovalKeepsExistingConnection() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        let pid = try fixture.corePID()
+        helper.rejectAuthorization = true
+        await fixture.store.setTunEnabled(true)
+        #expect(fixture.store.isStarted)
+        #expect(!fixture.store.isTunEnabled)
+        #expect(try fixture.corePID() == pid)
+        #expect(helper.startCount == 0)
+        #expect(fixture.store.lastErrorMessage?.contains("approval required") == true)
+    }
+
+    @Test func failedPrivilegedStartRestoresOrdinaryProxy() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        helper.rejectStart = true
+        await fixture.store.setTunEnabled(true)
+        #expect(helper.startCount == 1)
+        #expect(fixture.store.isStarted)
+        #expect(!fixture.store.isTunEnabled)
+        #expect(fixture.core.isProcessRunning)
+        #expect(fixture.store.lastErrorMessage?.contains("privileged launch rejected") == true)
+    }
+
+    @Test func disablingTUNReturnsToUnprivilegedCore() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        await fixture.store.setTunEnabled(true)
+        #expect(fixture.store.isStarted)
+        #expect(fixture.core.isPrivilegedRunning)
+        #expect(fixture.store.isTunEnabled)
+        await fixture.store.setTunEnabled(false)
+        #expect(fixture.store.isStarted)
+        #expect(!fixture.core.isPrivilegedRunning)
+        #expect(!fixture.store.isTunEnabled)
+        #expect(!helper.isRunning)
+    }
+
     @Test func outboundModeSurvivesPauseAndUnexpectedExit() async throws {
         let fixture = try await RuntimeLifecycleFixture.make()
         defer { fixture.cleanup() }
@@ -336,7 +381,7 @@ private struct RuntimeLifecycleFixture {
         socks: .init(enabled: false, host: "previous-proxy", port: 8888)
     )
 
-    static func make(occupyPreferredPorts: Bool = false) async throws -> RuntimeLifecycleFixture {
+    static func make(occupyPreferredPorts: Bool = false, privilegedTUN: (any PrivilegedTUNRuntime)? = nil) async throws -> RuntimeLifecycleFixture {
         let identifier = UUID().uuidString
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(identifier)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -375,12 +420,15 @@ private struct RuntimeLifecycleFixture {
         let profileB = try await repository.importProfile(from: sourceB) { _ in .success }
         try repository.select(profileA.id)
         let controller = RuntimeControllerFixture(runtimeURL: repository.runtimeConfigURL)
+        if let helper = privilegedTUN as? FakePrivilegedTUNRuntime {
+            helper.onRunningChange = { running in controller.state.withLock { $0.privilegedRunning = running } }
+        }
         RuntimeLifecycleURLProtocol.fixtures.withLock { $0[identifier] = controller }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RuntimeLifecycleURLProtocol.self]
         configuration.httpAdditionalHeaders = ["X-Nexora-Test-Fixture": identifier]
         let session = URLSession(configuration: configuration)
-        let core = MihomoCoreService(coreBinaryURL: executable)
+        let core = MihomoCoreService(coreBinaryURL: executable, privilegedTUN: privilegedTUN)
         let defaults = try #require(UserDefaults(suiteName: identifier))
         let previousProxy = previousProxy
         let store = AppStore(
@@ -483,6 +531,7 @@ private struct RuntimeLifecycleFixture {
 
 private final class RuntimeControllerFixture: Sendable {
     struct State: Sendable {
+        var privilegedRunning = false
         var proxyCommands: [SystemProxyCommand] = []
         var tunByProcess: [String: Bool] = [:]
         var modeByProcess: [String: String] = [:]
@@ -501,7 +550,8 @@ private final class RuntimeControllerFixture: Sendable {
     }
 
     private var processKey: String {
-        (try? String(
+        if state.withLock({ $0.privilegedRunning }) { return "privileged-session" }
+        return (try? String(
             contentsOf: runtimeURL.deletingLastPathComponent().appendingPathComponent("mihomo.pid"),
             encoding: .utf8
         )) ?? "stopped"

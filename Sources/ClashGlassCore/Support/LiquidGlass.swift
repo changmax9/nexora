@@ -104,7 +104,9 @@ struct GlassPalette {
     }
 
     var green: Color {
-        Color(red: 0.39, green: 0.91, blue: 0.65)
+        colorScheme == .dark
+            ? Color(red: 0.39, green: 0.91, blue: 0.65)
+            : Color(red: 0.08, green: 0.46, blue: 0.29)
     }
 
     var shadow: Color {

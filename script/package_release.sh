@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <version, for example 1.2.0>" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: $0 <version, for example 1.2.0> [--local]" >&2
   exit 2
 fi
 
+LOCAL_PACKAGE=false
+if [[ "${2:-}" == "--local" ]]; then
+  LOCAL_PACKAGE=true
+elif [[ $# -eq 2 ]]; then
+  echo "error: unknown packaging option: $2" >&2
+  exit 2
+fi
+if [[ -z "${CODE_SIGN_IDENTITY:-}" || "$CODE_SIGN_IDENTITY" == "-" ]]; then
+  echo "error: an Apple signing identity is required for the TUN helper" >&2
+  exit 1
+fi
 VERSION="${1#v}"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: version must have the form 1.2.3" >&2
+  exit 2
+fi
 TAG="v$VERSION"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -17,14 +32,14 @@ APPCAST_PATH="$DIST_DIR/appcast.xml"
 SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 BUILD_NUMBER="${APP_BUILD:-${GITHUB_RUN_NUMBER:-1}}"
 
-if [[ -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
+if [[ "$LOCAL_PACKAGE" == false && -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
   echo "error: SPARKLE_PRIVATE_KEY is required" >&2
   exit 1
 fi
 
 APP_VERSION="$VERSION" \
 APP_BUILD="$BUILD_NUMBER" \
-SPARKLE_ENABLE_AUTOMATIC_CHECKS=true \
+SPARKLE_ENABLE_AUTOMATIC_CHECKS="$([[ "$LOCAL_PACKAGE" == true ]] && echo false || echo true)" \
 BUILD_CONFIGURATION=release \
 "$ROOT_DIR/script/build_and_run.sh" --stage
 
@@ -39,13 +54,24 @@ for asset in geoip.dat geoip.metadb geosite.dat ASN.mmdb; do
   fi
 done
 
+/usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
+STAGING_DIR="$(mktemp -d "$DIST_DIR/dmg-stage.XXXXXX")"
+trap 'rm -rf "$STAGING_DIR"' EXIT
+/usr/bin/ditto "$APP_BUNDLE" "$STAGING_DIR/Nexora.app"
+ln -s /Applications "$STAGING_DIR/Applications"
 rm -f "$DMG_PATH" "$APPCAST_PATH"
 /usr/bin/hdiutil create \
   -volname "Nexora" \
-  -srcfolder "$APP_BUNDLE" \
+  -srcfolder "$STAGING_DIR" \
   -ov \
   -format UDZO \
   "$DMG_PATH"
+
+/usr/bin/hdiutil verify "$DMG_PATH"
+if [[ "$LOCAL_PACKAGE" == true ]]; then
+  echo "Local test DMG (no Sparkle appcast or notarization): $DMG_PATH"
+  exit 0
+fi
 
 SIGNATURE_OUTPUT="$(
   printf '%s' "$SPARKLE_PRIVATE_KEY" \

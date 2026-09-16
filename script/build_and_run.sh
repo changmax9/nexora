@@ -8,6 +8,7 @@ BUNDLE_ID="com.maxchang.Nexora"
 MIN_SYSTEM_VERSION="15.0"
 APP_VERSION="${APP_VERSION:-0.1.0}"
 SPARKLE_ENABLE_AUTOMATIC_CHECKS="${SPARKLE_ENABLE_AUTOMATIC_CHECKS:-false}"
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 
 case "$SPARKLE_ENABLE_AUTOMATIC_CHECKS" in
   true|false)
@@ -51,7 +52,9 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"
 mkdir -p "$APP_RESOURCES"
 mkdir -p "$APP_FRAMEWORKS"
+mkdir -p "$APP_CONTENTS/Library/LaunchDaemons"
 cp "$BUILD_BINARY" "$APP_BINARY"
+cp "$(dirname "$BUILD_BINARY")/NexoraTUNHelper" "$APP_MACOS/NexoraTUNHelper"
 chmod +x "$APP_BINARY"
 if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
   cp -R "$SPARKLE_FRAMEWORK" "$APP_FRAMEWORKS/"
@@ -121,7 +124,23 @@ cat >"$INFO_PLIST" <<PLIST
 </plist>
 PLIST
 
-/usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"
+cat >"$APP_CONTENTS/Library/LaunchDaemons/com.maxchang.Nexora.TUNHelper.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.maxchang.Nexora.TUNHelper</string>
+  <key>BundleProgram</key><string>Contents/MacOS/NexoraTUNHelper</string>
+  <key>MachServices</key><dict><key>com.maxchang.Nexora.TUNHelper</key><true/></dict>
+  <key>AssociatedBundleIdentifiers</key><array><string>com.maxchang.Nexora</string></array>
+  <key>ProcessType</key><string>Interactive</string>
+</dict></plist>
+PLIST
+/usr/bin/codesign --force --sign "$CODE_SIGN_IDENTITY" --identifier com.maxchang.Nexora.TUNHelper "$APP_MACOS/NexoraTUNHelper"
+if [[ -x "$APP_RESOURCES/mihomo" ]]; then
+  /usr/bin/codesign --force --sign "$CODE_SIGN_IDENTITY" --identifier com.maxchang.Nexora.mihomo "$APP_RESOURCES/mihomo"
+fi
+# Sign the enclosing app last without rewriting the helper's pinned identifier.
+/usr/bin/codesign --force --sign "$CODE_SIGN_IDENTITY" "$APP_BUNDLE"
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"

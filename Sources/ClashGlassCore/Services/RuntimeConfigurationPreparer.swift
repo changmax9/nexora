@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NexoraTUNSupport
 
 public struct PreparedRuntimeConfiguration: Equatable, Sendable {
     public let configURL: URL
@@ -97,7 +98,8 @@ public struct RuntimeConfigurationPreparer: Sendable {
     public func prepare(
         sourceURL: URL,
         runtimeDirectoryURL: URL,
-        routingOverrides: [RoutingOverride] = []
+        routingOverrides: [RoutingOverride] = [],
+        privilegedTUN: Bool = false
     ) throws -> PreparedRuntimeConfiguration {
         let sourceYAML = try String(contentsOf: sourceURL, encoding: .utf8)
         let settings = try MihomoConfigurationInspector.inspect(yaml: sourceYAML)
@@ -128,7 +130,7 @@ public struct RuntimeConfigurationPreparer: Sendable {
             dnsListenPort = nil
         }
 
-        let runtimeYAML = rewrite(
+        var runtimeYAML = rewrite(
             yaml: sourceYAML,
             mixedPort: mixedPort,
             controllerPort: controllerPort,
@@ -136,6 +138,10 @@ public struct RuntimeConfigurationPreparer: Sendable {
             routingOverrides: routingOverrides,
             vpnRuleTarget: vpnRuleTarget
         )
+        let controllerSecret = privilegedTUN ? UUID().uuidString + UUID().uuidString : settings.secret
+        if privilegedTUN, let controllerSecret {
+            runtimeYAML = try TUNConfiguration.normalized(yaml: runtimeYAML, secret: controllerSecret)
+        }
         try FileManager.default.createDirectory(
             at: runtimeDirectoryURL,
             withIntermediateDirectories: true
@@ -149,7 +155,7 @@ public struct RuntimeConfigurationPreparer: Sendable {
             runtimeDirectoryURL: runtimeDirectoryURL,
             mixedPort: mixedPort,
             controllerURL: URL(string: "http://127.0.0.1:\(controllerPort)")!,
-            controllerSecret: settings.secret,
+            controllerSecret: controllerSecret,
             dnsListenPort: dnsListenPort
         )
     }
