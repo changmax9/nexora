@@ -30,7 +30,12 @@ DMG_NAME="Nexora-$VERSION.dmg"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 APPCAST_PATH="$DIST_DIR/appcast.xml"
 SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
-BUILD_NUMBER="${APP_BUILD:-${GITHUB_RUN_NUMBER:-1}}"
+IFS=. read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$VERSION"
+if (( 10#$VERSION_MINOR > 99 || 10#$VERSION_PATCH > 9999 )); then
+  echo "error: version exceeds the supported build-number range" >&2
+  exit 2
+fi
+BUILD_NUMBER="${APP_BUILD:-$((10#$VERSION_MAJOR * 1000000 + 10#$VERSION_MINOR * 10000 + 10#$VERSION_PATCH))}"
 
 if [[ "$LOCAL_PACKAGE" == false && -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
   echo "error: SPARKLE_PRIVATE_KEY is required" >&2

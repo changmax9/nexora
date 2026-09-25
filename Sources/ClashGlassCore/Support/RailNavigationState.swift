@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 enum RailSurfaceMetrics {
-    static let usesSystemGlassSelection = false
+    static let usesSystemGlassSelection = true
     static let backgroundMatchesWindow = true
     static let railZIndex = 1.0
     static let stageZIndex = 0.0

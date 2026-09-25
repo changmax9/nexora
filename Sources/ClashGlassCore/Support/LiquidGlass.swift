@@ -117,7 +117,6 @@ struct GlassPalette {
 }
 
 struct LiquidGlassSurface<Content: View>: View {
-    @Environment(\.colorScheme) private var colorScheme
     let radius: CGFloat
     let padding: CGFloat
     @ViewBuilder let content: Content
@@ -129,31 +128,9 @@ struct LiquidGlassSurface<Content: View>: View {
     }
 
     var body: some View {
-        let palette = GlassPalette(colorScheme: colorScheme)
-        Group {
-            if #available(macOS 26.0, *) {
-                content
-                    .padding(padding)
-                    .background(
-                        palette.cardFill,
-                        in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    )
-                    .glassEffect(.clear.interactive(), in: .rect(cornerRadius: radius))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .strokeBorder(palette.cardStroke, lineWidth: 0.8)
-                    }
-            } else {
-                content
-                    .padding(padding)
-                    .background(palette.cardFill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .strokeBorder(palette.cardStroke, lineWidth: 0.8)
-                    }
-                    .shadow(color: palette.shadow.opacity(0.20), radius: 14, y: 6)
-            }
-        }
+        content
+            .padding(padding)
+            .modifier(TileGlassSurface(radius: radius, interactive: true))
     }
 }
 
@@ -173,29 +150,10 @@ struct GlassCard<Content: View>: View {
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        Group {
-            if #available(macOS 26.0, *) {
-                content
-                    .padding(padding)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(
-                        palette.cardFill,
-                        in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    )
-                    .glassEffect(
-                        .clear.interactive(),
-                        in: .rect(cornerRadius: radius)
-                    )
-            } else {
-                content
-                    .padding(padding)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(
-                        palette.cardFill,
-                        in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    )
-            }
-        }
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(TileGlassSurface(radius: radius, interactive: true))
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: radius, style: .continuous)

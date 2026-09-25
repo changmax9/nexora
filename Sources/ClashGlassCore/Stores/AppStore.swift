@@ -58,6 +58,23 @@ public final class AppStore {
             userDefaults.set(reduceMotion, forKey: "reduceMotion")
         }
     }
+    private var blurStrengthStorage = GlassAppearance.defaultBlurStrength
+    public var blurStrength: Double {
+        get { blurStrengthStorage }
+        set {
+            blurStrengthStorage = GlassAppearance.normalized(newValue)
+            userDefaults.set(blurStrengthStorage, forKey: "glassBlurStrength")
+        }
+    }
+
+    public var glassAppearance: GlassAppearance {
+        GlassAppearance(blurStrength: blurStrength)
+    }
+
+    public func resetGlassAppearance() {
+        blurStrength = GlassAppearance.defaultBlurStrength
+    }
+
     private var latencyTestURLStorage = LatencyTestPlan.defaultTestURL
     public var latencyTestURL: String {
         get { latencyTestURLStorage }
@@ -151,6 +168,9 @@ public final class AppStore {
             rawValue: userDefaults.string(forKey: "language") ?? ""
         ) ?? .system
         reduceMotion = userDefaults.bool(forKey: "reduceMotion")
+        if let value = userDefaults.object(forKey: "glassBlurStrength") as? Double {
+            blurStrengthStorage = GlassAppearance.normalized(value)
+        }
         latencyTestURLStorage = LatencyTestSettings.normalizedTestURL(
             userDefaults.string(forKey: "latencyTestURL") ?? LatencyTestPlan.defaultTestURL
         )

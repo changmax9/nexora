@@ -72,15 +72,19 @@ the appcast, and uploads both files to a GitHub Release. Installed copies show
 an **Update** capsule beside the macOS window controls when a newer release is
 available.
 
-The `SPARKLE_PRIVATE_KEY` repository secret must remain configured. Application
-preferences stay in `~/Library/Preferences`, while profiles and runtime data
+The `SPARKLE_PRIVATE_KEY` repository secret must remain configured. Release
+packaging also requires the Apple signing certificate secrets described
+in [TUN service packaging](docs/tun-service.md). GitHub adds source code archives
+to each release automatically. The version number determines an increasing
+build number so Sparkle can recognize updates from locally installed builds.
+Application preferences stay in `~/Library/Preferences`, while profiles and runtime data
 stay in `~/Library/Application Support/Nexora`; replacing the app bundle
 does not remove either location.
 
-Current community builds use ad-hoc code signing rather than Apple Developer ID
-notarization. macOS may require Control-clicking the app and choosing **Open**
-on first launch. Sparkle's EdDSA signature still verifies that later updates
-were produced with the project's private update key.
+The public 0.1.x releases are not notarized. The TUN helper in 0.2 requires an
+Apple-signed app, helper, and Mihomo core with the same signing team. A public
+0.2 release also needs clean-machine installation checks. Sparkle's EdDSA
+signature verifies that updates were produced with the project's private key.
 
 ## Project layout
 

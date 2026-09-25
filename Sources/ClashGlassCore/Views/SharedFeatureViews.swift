@@ -110,6 +110,19 @@ struct FeaturePage<Content: View>: View {
     }
 
     private var actionButtons: some View {
+        Group {
+            if #available(macOS 26, *) {
+                GlassEffectContainer(spacing: FeatureToolbarLayoutMetrics.actionSpacing) {
+                    actionButtonRow
+                }
+            } else {
+                actionButtonRow
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var actionButtonRow: some View {
         HStack(spacing: FeatureToolbarLayoutMetrics.actionSpacing) {
             ForEach(actions) { action in
                 LiquidIconButton(
@@ -122,7 +135,6 @@ struct FeaturePage<Content: View>: View {
                 .opacity(action.isDisabled ? 0.55 : 1)
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

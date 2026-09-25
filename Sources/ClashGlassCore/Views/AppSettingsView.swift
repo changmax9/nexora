@@ -23,6 +23,7 @@ public struct AppSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                glassSettings
                 appearanceSettings
                 languageSettings
                 latencySettings
@@ -32,8 +33,44 @@ public struct AppSettingsView: View {
         }
         .scrollIndicators(.hidden)
         .foregroundStyle(palette.primaryText)
-        .background(palette.background)
         .environment(\.locale, store.language.locale)
+    }
+
+    private var glassSettings: some View {
+        SettingsGroup(title: store.text(.glassAppearance), symbol: "square.on.square") {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(store.text(.glassBlurHint))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                blurSlider(title: store.text(.blurStrength), value: $store.blurStrength)
+                HStack {
+                    Text(store.text(.glassAccessibilityHint))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 12)
+                    Button(store.text(.resetGlassAppearance)) { store.resetGlassAppearance() }
+                        .controlSize(.small)
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private func blurSlider(title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(value.wrappedValue, format: .percent.precision(.fractionLength(0)))
+                    .font(.system(size: 12, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: 0...1, step: 0.05)
+                .accessibilityLabel(title)
+                .accessibilityValue(value.wrappedValue.formatted(.percent.precision(.fractionLength(0))))
+        }
     }
 
     private var appearanceSettings: some View {
@@ -155,28 +192,7 @@ public struct AppSettingsView: View {
                 Text(store.text(.language))
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                 Spacer()
-                Menu {
-                    Picker(store.text(.language), selection: $store.language) {
-                        ForEach(AppLanguage.selectableCases) { language in
-                            Text(language.nativeDisplayName).tag(language)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    HStack(spacing: 10) {
-                        Text(store.language.nativeDisplayName).lineLimit(1)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                    }
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .frame(width: 190, alignment: .trailing)
-                .modifier(SettingsControlGlass())
-                .accessibilityLabel(store.text(.language))
+                LanguageGlassSelector(selection: $store.language, title: store.text(.language), accent: store.accent.color(for: colorScheme))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
