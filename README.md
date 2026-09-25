@@ -59,32 +59,34 @@ swift test
 
 ## Publish an update
 
-Updates are published from version tags, not ordinary commits. Create and push
-a semantic version tag:
+Build the community DMG locally with an Apple signing identity. This keeps the
+app, Mihomo, and the TUN helper signed by the same team:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 0.2.0 --community
 ```
 
-The Release workflow builds a DMG, signs it with Sparkle's EdDSA key, generates
-the appcast, and uploads both files to a GitHub Release. Installed copies show
-an **Update** capsule beside the macOS window controls when a newer release is
+Stage that exact DMG and a source archive in a draft GitHub Release at a tag
+pointing to the matching source commit. Run the manual Release workflow with
+the version number; it verifies the DMG, signs it with Sparkle's EdDSA key,
+uploads the appcast, and publishes the release. Installed copies show an
+**Update** capsule beside the macOS window controls when a newer release is
 available.
 
-The `SPARKLE_PRIVATE_KEY` repository secret must remain configured. Release
-packaging also requires the Apple signing certificate secrets described
-in [TUN service packaging](docs/tun-service.md). GitHub adds source code archives
-to each release automatically. The version number determines an increasing
-build number so Sparkle can recognize updates from locally installed builds.
+The `SPARKLE_PRIVATE_KEY` repository secret must remain configured. GitHub also
+adds source code archives to each release automatically. The version number
+determines an increasing build number so Sparkle can recognize updates from
+locally installed builds.
 Application preferences stay in `~/Library/Preferences`, while profiles and runtime data
 stay in `~/Library/Application Support/Nexora`; replacing the app bundle
 does not remove either location.
 
-The public 0.1.x releases are not notarized. The TUN helper in 0.2 requires an
-Apple-signed app, helper, and Mihomo core with the same signing team. A public
-0.2 release also needs clean-machine installation checks. Sparkle's EdDSA
-signature verifies that updates were produced with the project's private key.
+Community releases use Apple Development signing and are not notarized. macOS
+requires the user to allow the app manually in Privacy & Security. TUN also
+requires administrator approval in Login Items & Extensions. TUN has been
+verified on the development Mac, but installation on another Mac is not yet
+verified. Sparkle's EdDSA signature verifies that updates were produced with
+the project's private key. See [TUN service](docs/tun-service.md) for details.
 
 ## Project layout
 

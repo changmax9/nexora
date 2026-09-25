@@ -1,9 +1,12 @@
 name: Nexora Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version already staged in a draft GitHub Release (for example 0.2.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,74 +14,45 @@ permissions:
 jobs:
   release:
     runs-on: xcode-27
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Resolve dependencies
-        run: swift package resolve
-
-      - name: Download Mihomo runtime
-        run: ./script/bootstrap.sh
-
-      - name: Import Apple signing certificate
-        env:
-          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Verify draft and source tag
         run: |
-          if [[ -z "$APPLE_CERTIFICATE_P12_BASE64" ]]; then
-            echo "An Apple signing certificate is required for the TUN service. Configure APPLE_CERTIFICATE_P12_BASE64 and APPLE_CERTIFICATE_PASSWORD."
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version"
             exit 1
           fi
-          certificate="$RUNNER_TEMP/nexora-signing.p12"
-          keychain="$RUNNER_TEMP/nexora-signing.keychain-db"
-          password="$(openssl rand -hex 24)"
-          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          rm -f "$certificate"
+          tag="v$RELEASE_VERSION"
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "$tag^{commit}")" ]]; then
+            echo "The release tag must point to this source commit"
+            exit 1
+          fi
+          if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != true ]]; then
+            echo "Expected a draft release containing the prebuilt DMG"
+            exit 1
+          fi
 
-      - name: Build signed update assets
+      - name: Resolve Sparkle signing tool
+        run: swift package resolve
+
+      - name: Download and sign the tested DMG
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          CODE_SIGN_IDENTITY: ${{ secrets.APPLE_CODE_SIGN_IDENTITY }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          chmod +x script/build_and_run.sh script/package_release.sh
-          ./script/package_release.sh "$version"
+          mkdir -p dist
+          gh release download "v$RELEASE_VERSION" \
+            --pattern "Nexora-$RELEASE_VERSION.dmg" --dir dist
+          chmod +x script/sign_release_assets.sh
+          ./script/sign_release_assets.sh "$RELEASE_VERSION"
 
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Publish update feed and release
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          cat > dist/release-notes.md <<EOF
-          ## Nexora $version
-
-          - Native macOS client powered by Mihomo
-          - Signed Sparkle update feed and DMG download
-          - Preferences and managed profiles remain outside the app bundle
-
-          ### Installation
-
-          This community build is distributed without Apple Developer ID
-          notarization. If macOS blocks the first launch, Control-click the app,
-          choose **Open**, and confirm. Sparkle updates are independently
-          protected with an EdDSA signature.
-          EOF
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/Nexora-$version.dmg" \
-            "dist/appcast.xml" \
-            --title "Nexora $version" \
-            --notes-file "dist/release-notes.md"
-
-      - name: Remove temporary signing keychain
-        if: always()
-        run: |
-          security delete-keychain "$RUNNER_TEMP/nexora-signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/nexora-signing.p12"
+          tag="v$RELEASE_VERSION"
+          gh release upload "$tag" dist/appcast.xml --clobber
+          gh release edit "$tag" --draft=false
