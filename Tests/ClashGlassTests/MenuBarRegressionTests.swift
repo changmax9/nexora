@@ -2,6 +2,15 @@ import Foundation
 import Testing
 @testable import ClashGlassCore
 
+@Test func menuBarStatusClicksDoNotTriggerOutsideDismissalBeforeToggle() {
+    let panel = CGRect(x: 1200, y: 200, width: 360, height: 540)
+    let status = CGRect(x: 1500, y: 750, width: 24, height: 24)
+    #expect(!MenuBarPanelPlacement.shouldDismiss(click: CGPoint(x: 1512, y: 762), panelFrame: panel, statusFrame: status))
+    #expect(!MenuBarPanelPlacement.shouldDismiss(click: CGPoint(x: 1300, y: 400), panelFrame: panel, statusFrame: status))
+    #expect(MenuBarPanelPlacement.shouldDismiss(click: CGPoint(x: 900, y: 400), panelFrame: panel, statusFrame: status))
+    #expect(MenuBarPanelPlacement.shouldDismiss(click: CGPoint(x: 1480, y: 762), panelFrame: panel, statusFrame: status))
+}
+
 @MainActor
 @Test func menuBarResolvesRenamedSelectorsAndGlobalMode() {
     let store = AppStore()

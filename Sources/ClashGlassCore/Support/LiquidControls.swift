@@ -32,14 +32,9 @@ public enum ToolbarControlAppearancePolicy {
     public static let stoppedCoreSymbol = "arrow.clockwise"
     public static let runningCoreUsesSolidGreenSurface = false
     public static let runningCoreUsesWhiteSymbol = false
-    public static let quickEditUsesNativeMenu = true
     public static let quickEditUsesPlainIcon = false
     public static let quickEditUsesCompactGlassSurface = true
-    public static let quickEditKeepsSurfaceOutsideNativeMenuLabel = true
-    public static let quickEditVisualSurfaceAllowsHitTesting = false
-    public static let quickEditHitLayerUsesVisibleAlpha = false
     public static let quickEditUsesSingleInteractiveSurface = true
-    public static let quickEditUsesAppKitMenuBridge = true
     public static let quickEditSymbol = "pencil"
     public static let controlCornerRadius: Double = 11
 }
@@ -271,8 +266,7 @@ struct ToolbarMenuIconSurface: View {
     }
 }
 
-@MainActor
-struct AppKitMenuButton: NSViewRepresentable {
+struct GlassActionPopoverButton: View {
     struct Entry {
         let title: String?
         let symbol: String?
@@ -304,82 +298,81 @@ struct AppKitMenuButton: NSViewRepresentable {
     }
 
     let entries: [Entry]
-    var accessibilityTitle = "Quick Edit"
+    let accessibilityTitle: String
+    let accent: Color
+    @State private var isPresented = false
+    @State private var isHovering = false
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(entries: entries)
-    }
-
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(frame: .zero)
-        button.title = ""
-        button.isBordered = false
-        button.setButtonType(.momentaryChange)
-        button.focusRingType = .none
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.showMenu(_:))
-        button.sendAction(on: [.leftMouseDown])
-        button.setAccessibilityLabel(accessibilityTitle)
-        return button
-    }
-
-    func updateNSView(_ button: NSButton, context: Context) {
-        context.coordinator.entries = entries
-        button.setAccessibilityLabel(accessibilityTitle)
-    }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        var entries: [Entry]
-
-        init(entries: [Entry]) {
-            self.entries = entries
+    var body: some View {
+        Button { isPresented.toggle() } label: {
+            ToolbarMenuIconSurface(
+                symbol: ToolbarControlAppearancePolicy.quickEditSymbol,
+                isHovering: isHovering || isPresented
+            )
         }
-
-        @objc func showMenu(_ sender: NSButton) {
-            let menu = NSMenu()
-            menu.autoenablesItems = false
-
-            for (index, entry) in entries.enumerated() {
-                guard let title = entry.title else {
-                    menu.addItem(.separator())
-                    continue
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityLabel(accessibilityTitle)
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(accessibilityTitle, systemImage: "pencil")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                ForEach(entries.indices, id: \.self) { index in
+                    let entry = entries[index]
+                    if let title = entry.title {
+                        GlassActionPopoverRow(title: title, symbol: entry.symbol ?? "", isEnabled: entry.isEnabled) {
+                            isPresented = false
+                            entry.action?()
+                        }
+                    } else {
+                        Divider().padding(.horizontal, 12).padding(.vertical, 4)
+                    }
                 }
-
-                let item = NSMenuItem(
-                    title: title,
-                    action: #selector(performMenuItem(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.tag = index
-                item.isEnabled = entry.isEnabled
-                if let symbol = entry.symbol {
-                    item.image = NSImage(
-                        systemSymbolName: symbol,
-                        accessibilityDescription: title
-                    )
-                }
-                menu.addItem(item)
             }
-
-            if let event = NSApp.currentEvent {
-                NSMenu.popUpContextMenu(menu, with: event, for: sender)
-            } else {
-                menu.popUp(
-                    positioning: nil,
-                    at: NSPoint(x: 0, y: sender.bounds.minY),
-                    in: sender
-                )
-            }
+            .padding(8)
+            .frame(width: 248)
+            .tint(accent)
+            .accentColor(accent)
+            .environment(\.clashGlassReduceMotion, reduceMotion)
+            .onKeyPress(.escape) { isPresented = false; return .handled }
         }
+    }
+}
 
-        @objc func performMenuItem(_ sender: NSMenuItem) {
-            guard entries.indices.contains(sender.tag) else {
-                return
+private struct GlassActionPopoverRow: View {
+    let title: String
+    let symbol: String
+    let isEnabled: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).frame(width: 16)
+                    .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
+                Text(title).frame(maxWidth: .infinity, alignment: .leading)
             }
-            entries[sender.tag].action?()
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .foregroundStyle(isEnabled ? .primary : .secondary)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentColor.opacity(isHovering && isEnabled ? 0.14 : 0))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .onHover { isHovering = $0 }
+        .scaleEffect(isHovering && isEnabled && !reduceMotion ? 1.015 : 1)
+        .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.82), value: isHovering)
     }
 }
 
@@ -397,7 +390,10 @@ private struct LiquidGlassButtonBody<Label: View>: View {
     var body: some View {
         Group {
             if #available(macOS 26.0, *) {
-                GlassEffectContainer(spacing: 0) {
+                if #available(macOS 27.0, *) {
+                    label
+                        .glassEffect(.regular.tint(tint).interactive(), in: .rect(cornerRadius: radius))
+                } else {
                     label
                         .glassEffect(.regular.tint(tint), in: .rect(cornerRadius: radius))
                 }

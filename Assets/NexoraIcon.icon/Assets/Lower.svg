@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs><linearGradient id="mint" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b5fff0"/><stop offset="1" stop-color="#68e2c8"/></linearGradient></defs>
+  <path d="M644 845 H442 Q407 845 407 811 Q407 799 417 785 L486 706 Q498 693 514 693 H592 Q603 693 614 682 L657 635 V550 Q657 523 684 523 H718 Q731 523 742 538 L812 631 Q827 650 814 672 L682 818 Q663 845 644 845 Z" fill="url(#mint)" stroke="#69d9bf" stroke-width="3"/>
+</svg>

@@ -91,7 +91,7 @@ final class MenuBarPanelController: NSObject {
         fadeGeneration += 1
         isPresented = true
         let generation = fadeGeneration
-        let statusFrame = buttonWindow.convertToScreen(button.frame)
+        let statusFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         positionPanel(below: statusFrame)
 
         panel.alphaValue = 0
@@ -185,7 +185,8 @@ final class MenuBarPanelController: NSObject {
             guard let self, self.panel.isVisible else {
                 return event
             }
-            if event.window === self.panel || event.window === self.statusItem.button?.window {
+            if self.containsPanelOrStatusButton(NSEvent.mouseLocation)
+                || event.window === self.panel || event.window === self.statusItem.button?.window {
                 return event
             }
             Task { @MainActor in
@@ -197,10 +198,24 @@ final class MenuBarPanelController: NSObject {
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
+            // Status-bar mouse-down can be delivered by the global monitor even
+            // though the button action arrives locally on mouse-up. Do not let
+            // outside-click dismissal race with that button's toggle action.
+            guard let self, !self.containsPanelOrStatusButton(NSEvent.mouseLocation) else { return }
             Task { @MainActor in
-                self?.hide()
+                self.hide()
             }
         }
+    }
+
+    private func containsPanelOrStatusButton(_ point: NSPoint) -> Bool {
+        guard let button = statusItem.button, let window = button.window else {
+            return panel.frame.contains(point)
+        }
+        let statusFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return !MenuBarPanelPlacement.shouldDismiss(
+            click: point, panelFrame: panel.frame, statusFrame: statusFrame
+        )
     }
 
     private func observeStore() {

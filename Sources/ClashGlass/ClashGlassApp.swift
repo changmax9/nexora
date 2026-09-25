@@ -119,12 +119,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
                 window.titlebarAppearsTransparent = true
                 window.isMovableByWindowBackground = true
                 window.titleVisibility = .hidden
-                window.toolbarStyle = .unifiedCompact
-                window.backgroundColor = NSColor(name: nil) { appearance in
-                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                        ? .black
-                        : .white
+                // Let AppKit place the traffic lights within a full-height title area.
+                if window.toolbar == nil {
+                    let toolbar = NSToolbar(identifier: "NexoraWindowChrome")
+                    toolbar.allowsUserCustomization = false
+                    window.toolbar = toolbar
                 }
+                window.toolbarStyle = .unified
+                window.titlebarSeparatorStyle = .none
+                window.isOpaque = false
+                window.backgroundColor = .clear
                 window.collectionBehavior.insert(.moveToActiveSpace)
                 window.orderFrontRegardless()
                 window.makeKeyAndOrderFront(nil)

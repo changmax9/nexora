@@ -56,6 +56,43 @@ import Testing
     #expect(restored.accent == .cobalt)
 }
 
+@MainActor
+@Test func glassBlurPersistsClampsAndReplacesLegacyTransparency() throws {
+    let suiteName = "ClashGlassTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let rootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    // A prior high-transparency preference must not weaken the new frosted default.
+    defaults.set(1.0, forKey: "windowTransparency")
+    defaults.set(1.0, forKey: "tileTransparency")
+    defaults.set(false, forKey: "glassEnabled")
+    let store = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: rootURL),
+        userDefaults: defaults
+    )
+    #expect(store.blurStrength == 1)
+    store.blurStrength = 0.35
+
+    let restored = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: rootURL),
+        userDefaults: defaults
+    )
+    #expect(restored.blurStrength == 0.35)
+    #expect(restored.glassAppearance.blurStrength == 0.35)
+    restored.blurStrength = 2
+    #expect(restored.blurStrength == 1)
+    #expect(defaults.double(forKey: "glassBlurStrength") == 1)
+    restored.blurStrength = -1
+    #expect(restored.blurStrength == 0)
+    restored.resetGlassAppearance()
+    #expect(restored.blurStrength == GlassAppearance.defaultBlurStrength)
+    #expect(defaults.double(forKey: "glassBlurStrength") == GlassAppearance.defaultBlurStrength)
+
+}
+
 @Test func decorativeAccentOptionsReserveTrafficLightColorsForStatus() {
     #expect(NexoraAccent.allCases.count == 11)
     #expect(NexoraAccent.allCases.first == .terracotta)
@@ -471,14 +508,9 @@ import Testing
     #expect(ToolbarControlAppearancePolicy.stoppedCoreSymbol == "arrow.clockwise")
     #expect(!ToolbarControlAppearancePolicy.runningCoreUsesSolidGreenSurface)
     #expect(!ToolbarControlAppearancePolicy.runningCoreUsesWhiteSymbol)
-    #expect(ToolbarControlAppearancePolicy.quickEditUsesNativeMenu)
     #expect(!ToolbarControlAppearancePolicy.quickEditUsesPlainIcon)
     #expect(ToolbarControlAppearancePolicy.quickEditUsesCompactGlassSurface)
-    #expect(ToolbarControlAppearancePolicy.quickEditKeepsSurfaceOutsideNativeMenuLabel)
-    #expect(!ToolbarControlAppearancePolicy.quickEditVisualSurfaceAllowsHitTesting)
-    #expect(!ToolbarControlAppearancePolicy.quickEditHitLayerUsesVisibleAlpha)
     #expect(ToolbarControlAppearancePolicy.quickEditUsesSingleInteractiveSurface)
-    #expect(ToolbarControlAppearancePolicy.quickEditUsesAppKitMenuBridge)
     #expect(ToolbarControlAppearancePolicy.quickEditSymbol == "pencil")
     #expect(ToolbarControlMetrics.visibleSize == 34)
     #expect(ToolbarControlMetrics.hitTarget == 40)
@@ -616,7 +648,7 @@ import Testing
 }
 
 @Test func railUsesTheWindowBackgroundAndDrawsAboveTheMainStage() {
-    #expect(RailSurfaceMetrics.usesSystemGlassSelection == false)
+    #expect(RailSurfaceMetrics.usesSystemGlassSelection)
     #expect(RailSurfaceMetrics.backgroundMatchesWindow)
     #expect(RailSurfaceMetrics.railZIndex > RailSurfaceMetrics.stageZIndex)
     #expect(

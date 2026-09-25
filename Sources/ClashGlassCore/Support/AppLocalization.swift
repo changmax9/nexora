@@ -7,6 +7,11 @@ public enum AppString: String, CaseIterable, Sendable {
     case colorScheme
     case accentColor
     case reduceMotion
+    case glassAppearance
+    case blurStrength
+    case glassBlurHint
+    case glassAccessibilityHint
+    case resetGlassAppearance
     case system
     case light
     case dark
@@ -270,6 +275,12 @@ enum AppLocalization {
 
     private static let translations: [AppLanguage: [AppString: String]] = [
         .english: [
+            .glassAppearance: "Glass & Blur",
+            .blurStrength: "Blur strength",
+            .glassBlurHint: "Higher values create a more frosted background and cards. Text and controls stay sharp.",
+            .glassAccessibilityHint: "Reduce Transparency in macOS takes priority over these settings.",
+            .resetGlassAppearance: "Reset",
+
             .menuQuickAccess: "Quick Access",
             .menuNodes: "Nodes",
             .noMatchingNodes: "No matching nodes",
@@ -392,6 +403,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "The managed YAML copy and its saved routing overrides will be removed.",
         ],
         .simplifiedChinese: [
+            .glassAppearance: "玻璃与模糊",
+            .blurStrength: "模糊程度",
+            .glassBlurHint: "数值越高，窗口背景和卡片的磨砂感越强。文字和按钮始终清晰。",
+            .glassAccessibilityHint: "macOS 的“降低透明度”设置优先于这些选项。",
+            .resetGlassAppearance: "恢复默认",
+
             .menuQuickAccess: "快捷面板",
             .menuNodes: "节点",
             .noMatchingNodes: "没有匹配的节点",
@@ -469,6 +486,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "托管的 YAML 副本及其保存的路由规则将被删除。",
         ],
         .traditionalChinese: [
+            .glassAppearance: "玻璃與模糊",
+            .blurStrength: "模糊程度",
+            .glassBlurHint: "數值越高，視窗背景和卡片的磨砂感越強。文字和按鈕保持清晰。",
+            .glassAccessibilityHint: "macOS 的「降低透明度」設定優先於這些選項。",
+            .resetGlassAppearance: "回復預設",
+
             .menuQuickAccess: "快捷面板",
             .menuNodes: "節點",
             .noMatchingNodes: "沒有符合的節點",
@@ -546,6 +569,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "託管的 YAML 副本及其已儲存的路由規則將被刪除。",
         ],
         .japanese: [
+            .glassAppearance: "ガラスとぼかし",
+            .blurStrength: "ぼかしの強さ",
+            .glassBlurHint: "値を上げると背景とカードのすりガラス感が強くなります。文字とボタンは鮮明なままです。",
+            .glassAccessibilityHint: "macOS の「透明度を下げる」設定が優先されます。",
+            .resetGlassAppearance: "リセット",
+
             .menuQuickAccess: "クイックアクセス",
             .menuNodes: "ノード",
             .noMatchingNodes: "一致するノードがありません",
@@ -623,6 +652,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "管理対象の YAML コピーと保存済みルーティングルールが削除されます。",
         ],
         .french: [
+            .glassAppearance: "Verre et flou",
+            .blurStrength: "Intensité du flou",
+            .glassBlurHint: "Une valeur élevée renforce le verre dépoli du fond et des cartes. Le texte et les commandes restent nets.",
+            .glassAccessibilityHint: "Le réglage Réduire la transparence de macOS est prioritaire.",
+            .resetGlassAppearance: "Réinitialiser",
+
             .menuQuickAccess: "Accès rapide",
             .menuNodes: "Nœuds",
             .noMatchingNodes: "Aucun nœud correspondant",
@@ -704,6 +739,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "La copie YAML gérée et ses règles de routage enregistrées seront supprimées.",
         ],
         .russian: [
+            .glassAppearance: "Стекло и размытие",
+            .blurStrength: "Сила размытия",
+            .glassBlurHint: "Чем выше значение, тем сильнее матовость фона и карточек. Текст и элементы управления остаются чёткими.",
+            .glassAccessibilityHint: "Настройка macOS «Уменьшить прозрачность» имеет приоритет.",
+            .resetGlassAppearance: "Сбросить",
+
             .menuQuickAccess: "Быстрый доступ",
             .menuNodes: "Узлы",
             .noMatchingNodes: "Нет подходящих узлов",
@@ -785,6 +826,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "Управляемая копия YAML и сохранённые правила маршрутизации будут удалены.",
         ],
         .spanish: [
+            .glassAppearance: "Cristal y desenfoque",
+            .blurStrength: "Intensidad del desenfoque",
+            .glassBlurHint: "Los valores altos refuerzan el efecto esmerilado del fondo y las tarjetas. El texto y los controles siguen nítidos.",
+            .glassAccessibilityHint: "Reducir transparencia de macOS tiene prioridad.",
+            .resetGlassAppearance: "Restablecer",
+
             .menuQuickAccess: "Acceso rápido",
             .menuNodes: "Nodos",
             .noMatchingNodes: "No hay nodos coincidentes",
@@ -866,6 +913,12 @@ enum AppLocalization {
             .deleteProfileExplanation: "Se eliminarán la copia YAML gestionada y sus reglas de enrutamiento guardadas.",
         ],
         .portuguese: [
+            .glassAppearance: "Vidro e desfoque",
+            .blurStrength: "Intensidade do desfoque",
+            .glassBlurHint: "Valores maiores reforçam o vidro fosco do fundo e dos cartões. O texto e os controlos continuam nítidos.",
+            .glassAccessibilityHint: "Reduzir transparência do macOS tem prioridade.",
+            .resetGlassAppearance: "Repor",
+
             .menuQuickAccess: "Acesso rápido",
             .menuNodes: "Nós",
             .noMatchingNodes: "Nenhum nó correspondente",

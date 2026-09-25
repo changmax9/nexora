@@ -34,8 +34,8 @@ public struct MenuBarPanelView: View {
         }
         .padding(MenuBarQuickAccessPolicy.outerPadding)
         .frame(width: MenuBarQuickAccessPolicy.panelWidth, height: MenuBarQuickAccessPolicy.panelHeight)
-        .background(palette.background.opacity(0.97))
-        .background(.regularMaterial)
+        .background { WindowGlassBackground(appearance: store.glassAppearance) }
+        .environment(\.nexoraGlassAppearance, store.glassAppearance)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -110,7 +110,7 @@ public struct MenuBarPanelView: View {
         .padding(12)
         .frame(maxWidth: .infinity)
         .frame(height: MenuBarQuickAccessPolicy.mainControlHeight)
-        .background(palette.cardFill, in: .rect(cornerRadius: 14))
+        .background { TileGlassBackground(radius: 14) }
     }
 
     private var filteredNodes: [ProxyNode] {
@@ -171,22 +171,11 @@ public struct MenuBarPanelView: View {
             }
             .frame(height: MenuBarQuickAccessPolicy.nodeHeaderHeight)
 
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                MenuBarSearchField(placeholder: store.text(.search), text: $searchText)
-                    .frame(height: 18)
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(store.text(.cancel))
-                }
-            }
-            .font(.system(size: 12))
-            .padding(.horizontal, 9)
-            .frame(height: MenuBarQuickAccessPolicy.searchHeight)
-            .background(palette.cardFill, in: .rect(cornerRadius: 8))
+            MenuBarSearchField(placeholder: store.text(.search), text: $searchText)
+                .font(.system(size: 12))
+                .padding(.horizontal, 9)
+                .frame(height: MenuBarQuickAccessPolicy.searchHeight)
+                .background { TileGlassBackground(radius: 8) }
 
             ScrollViewReader { scrollProxy in
                 ScrollView(.vertical) {

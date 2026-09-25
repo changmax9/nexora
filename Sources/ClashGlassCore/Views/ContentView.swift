@@ -19,12 +19,11 @@ public struct ContentView: View {
             )
 
             ZStack {
-                palette.background.ignoresSafeArea()
+                WindowGlassBackground(appearance: store.glassAppearance).ignoresSafeArea()
 
                 HStack(spacing: 0) {
                     IconRail(store: store)
                         .frame(width: CGFloat(layout.railWidth))
-                        .background(palette.background)
                         .zIndex(RailSurfaceMetrics.railZIndex)
 
                     MainStage(store: store, layout: layout)
@@ -42,7 +41,8 @@ public struct ContentView: View {
                 appPreference: store.reduceMotion
             )
         )
-        .containerBackground(palette.background, for: .window)
+        .containerBackground(.clear, for: .window)
+        .environment(\.nexoraGlassAppearance, store.glassAppearance)
         .alert(
             "Nexora",
             isPresented: Binding(
@@ -70,6 +70,9 @@ private struct IconRail: View {
     @Bindable var store: AppStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.clashGlassReduceMotion) private var reduceMotion
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityShowBorders) private var showBorders
     @State private var hoverState = RailHoverState()
 
     var body: some View {
@@ -91,7 +94,7 @@ private struct IconRail: View {
                         .symbolRenderingMode(.monochrome)
                         .foregroundStyle(
                             presentation.emphasizesIcon
-                                ? palette.primaryText
+                                ? (appearsActive ? palette.rose : palette.primaryText)
                                 : palette.secondaryText
                         )
                         .animation(
@@ -138,10 +141,17 @@ private struct IconRail: View {
     @ViewBuilder
     private func railSelection(palette: GlassPalette) -> some View {
         Capsule(style: .continuous)
-            .fill(palette.railSelection)
+            .fill(palette.railSelection.opacity(appearsActive ? 1 : 0.45))
+            .background {
+                if #available(macOS 26, *), !reduceTransparency {
+                    Capsule(style: .continuous)
+                        .fill(.clear)
+                        .glassEffect(.regular.tint(palette.rose.opacity(0.22)).interactive(), in: .capsule)
+                }
+            }
             .overlay {
                 Capsule(style: .continuous)
-                    .strokeBorder(palette.selectionStroke.opacity(0.52), lineWidth: 0.8)
+                    .strokeBorder(palette.selectionStroke.opacity(showBorders ? 0.8 : 0.52), lineWidth: showBorders ? 1.5 : 0.8)
             }
             .shadow(
                 color: palette.shadow.opacity(0.075),
@@ -160,7 +170,6 @@ private struct MainStage: View {
     @State private var showsProfileRename = false
     @State private var renameProfileID: ManagedProfile.ID?
     @State private var renameDraft = ""
-    @State private var isQuickEditHovering = false
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
@@ -203,15 +212,7 @@ private struct MainStage: View {
                     }
                     .disabled(store.isRuntimeTransitioning)
 
-                    ZStack {
-                        ToolbarMenuIconSurface(
-                            symbol: ToolbarControlAppearancePolicy.quickEditSymbol,
-                            isHovering: isQuickEditHovering
-                        )
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-
-                        AppKitMenuButton(entries: [
+                        GlassActionPopoverButton(entries: [
                             .item(
                                 store.text(.renameProfile),
                                 symbol: "pencil",
@@ -254,20 +255,9 @@ private struct MainStage: View {
                             ) {
                                 store.selectedSection = .profiles
                             },
-                        ], accessibilityTitle: store.text(.quickEdit))
-                        .frame(
-                            width: CGFloat(ToolbarControlMetrics.hitTarget),
-                            height: CGFloat(ToolbarControlMetrics.hitTarget)
-                        )
-                    }
-                    .frame(
-                        width: CGFloat(ToolbarControlMetrics.hitTarget),
-                        height: CGFloat(ToolbarControlMetrics.hitTarget)
-                    )
+                        ], accessibilityTitle: store.text(.quickEdit), accent: store.accent.color(for: colorScheme))
                     .help(store.text(.quickEdit))
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(store.text(.quickEdit))
-                    .onHover { isQuickEditHovering = $0 }
+
                 }
             }
             .frame(

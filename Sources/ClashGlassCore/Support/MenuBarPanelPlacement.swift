@@ -1,6 +1,10 @@
 import Foundation
 
 public enum MenuBarPanelPlacement {
+    public static func shouldDismiss(click: CGPoint, panelFrame: CGRect, statusFrame: CGRect) -> Bool {
+        !panelFrame.contains(click) && !statusFrame.contains(click)
+    }
+
     public static func origin(panelSize: CGSize, statusFrame: CGRect, visibleFrame: CGRect) -> CGPoint {
         let inset: CGFloat = 8
         let minX = visibleFrame.minX + inset
