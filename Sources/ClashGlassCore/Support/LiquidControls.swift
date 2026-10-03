@@ -343,10 +343,11 @@ struct GlassActionPopoverButton: View {
     }
 }
 
-private struct GlassActionPopoverRow: View {
+struct GlassActionPopoverRow: View {
     let title: String
     let symbol: String
     let isEnabled: Bool
+    var subtitle: String? = nil
     let action: () -> Void
     @State private var isHovering = false
     @Environment(\.clashGlassReduceMotion) private var reduceMotion
@@ -356,12 +357,22 @@ private struct GlassActionPopoverRow: View {
             HStack(spacing: 10) {
                 Image(systemName: symbol).frame(width: 16)
                     .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
-                Text(title).frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 11, weight: .regular, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.system(size: 12, weight: .medium, design: .rounded))
             .foregroundStyle(isEnabled ? .primary : .secondary)
             .padding(.horizontal, 12)
-            .frame(height: 32)
+            .padding(.vertical, subtitle == nil ? 0 : 10)
+            .frame(minHeight: 32)
             .background {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.accentColor.opacity(isHovering && isEnabled ? 0.14 : 0))

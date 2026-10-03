@@ -13,6 +13,9 @@ configtest.yaml
 *.log
 .vscode/
 docs/superpowers/
+docs/bug-audit-*.md
+docs/bug-and-lightweight-audit-*.md
+docs/macos-27-validation.md
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/

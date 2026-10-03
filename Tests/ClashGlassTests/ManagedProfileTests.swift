@@ -55,6 +55,44 @@ import Testing
     #expect(try restored.selectedProfileID() == profile.id)
 }
 
+@MainActor
+@Test func failedRegistryImportDoesNotLeaveAnOrphanConfiguration() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let root = directory.appendingPathComponent("Managed")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let source = directory.appendingPathComponent("config.yaml")
+    try "mixed-port: 7890".write(to: source, atomically: true, encoding: .utf8)
+    try "broken registry".write(to: root.appendingPathComponent("profiles.json"), atomically: true, encoding: .utf8)
+    let repository = ManagedProfileRepository(rootURL: root)
+    await #expect(throws: DecodingError.self) {
+        try await repository.importProfile(from: source) { _ in .success }
+    }
+    let profiles = root.appendingPathComponent("Profiles")
+    #expect((try? FileManager.default.contentsOfDirectory(atPath: profiles.path))?.isEmpty != false)
+    #expect(try String(contentsOf: root.appendingPathComponent("profiles.json"), encoding: .utf8) == "broken registry")
+}
+
+@MainActor
+@Test func failedRegistrySaveDoesNotDeleteAnExistingConfiguration() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let root = directory.appendingPathComponent("Managed")
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        try? FileManager.default.removeItem(at: directory)
+    }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let source = directory.appendingPathComponent("config.yaml")
+    try "mixed-port: 7890".write(to: source, atomically: true, encoding: .utf8)
+    let repository = ManagedProfileRepository(rootURL: root)
+    let profile = try await repository.importProfile(from: source) { _ in .success }
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+    #expect(throws: (any Error).self) { try repository.remove(profile.id) }
+    #expect(FileManager.default.fileExists(atPath: profile.managedConfigURL.path))
+    #expect(try repository.loadProfiles().map(\.id) == [profile.id])
+    #expect(try repository.selectedProfileID() == profile.id)
+}
+
 @Test func managedProfileRenamePersistsAndTrimsWhitespace() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -125,4 +163,15 @@ import Testing
     let validation = await service.validateConfig(path: configURL.path)
 
     #expect(validation == .failure("configuration rejected"))
+}
+
+@Test func coreValidationReportsTheParseErrorInsteadOfTheTemporaryFileSummary() {
+    let path = "/private/staging/config.yaml"
+    let output = """
+    time="2026-10-02T17:00:00+08:00" level=error msg="yaml: unmarshal errors:\\n  line 1: cannot unmarshal a node subscription into config.RawConfig"
+    configuration file \(path) test failed
+    """
+    let message = MihomoCoreService.validationFailureMessage(from: output, configPath: path)
+    #expect(message == "yaml: unmarshal errors:\n  line 1: cannot unmarshal a node subscription into config.RawConfig")
+    #expect(!message.contains(path))
 }

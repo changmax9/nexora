@@ -7,6 +7,92 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RuntimeLifecycleRegressionTests {
+    @Test func endedTrafficStreamsWaitBeforeReconnecting() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.endsTrafficStream = true }
+        try await fixture.startVPN()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while fixture.controller.state.withLock({ $0.trafficRequestTimes.count }) < 2,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let times = fixture.controller.state.withLock { $0.trafficRequestTimes }
+        try #require(times.count == 2)
+        #expect(times[0].duration(to: times[1]) >= .milliseconds(300))
+    }
+
+    @Test func cancelledLatencyTestsDoNotFinishOrReportAFailure() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try await fixture.startController()
+        fixture.prepareDelayedLatencyTests()
+        let measurement = Task { await fixture.store.delayTestAll() }
+        try await fixture.waitForLatencyRequest()
+        measurement.cancel()
+        await measurement.value
+        #expect(!fixture.store.isLatencyTesting)
+        #expect(fixture.store.latencyTestProgress.completed == 0)
+        #expect(fixture.store.lastErrorMessage == nil)
+    }
+
+    @Test func profileChangesStopRemainingLatencyBatches() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try await fixture.startController()
+        fixture.prepareDelayedLatencyTests()
+        let measurement = Task { await fixture.store.delayTestAll() }
+        try await fixture.waitForLatencyRequest()
+        await fixture.store.selectManagedProfile(fixture.profileB.id)
+        await measurement.value
+        #expect(fixture.store.selectedManagedProfileID == fixture.profileB.id)
+        #expect(fixture.controller.state.withLock { $0.delayRequestCount } <= LatencyTestPlan.maximumConcurrentFallbackTests)
+        #expect(!fixture.store.isLatencyTesting)
+        #expect(fixture.store.lastErrorMessage == nil)
+    }
+
+    @Test func switchingProfilesReplacesOnlyTheirProxySnapshotWithoutEnablingVPN() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.usesProfileProxySnapshots = true }
+        try await fixture.startController()
+        #expect(fixture.store.selectedProfileProxyGroups.map(\.name) == ["A Routes"])
+        #expect(fixture.store.selectedProfileProxyGroups.flatMap(\.nodes).map(\.name) == ["A Node"])
+
+        await fixture.store.selectManagedProfile(fixture.profileB.id)
+
+        #expect(fixture.store.selectedProfileProxyGroups.map(\.name) == ["B Routes"])
+        #expect(fixture.store.selectedProfileProxyGroups.flatMap(\.nodes).map(\.name) == ["B Node"])
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+        try fixture.expectRuntimeMatchesSelectedProfile(mode: .direct, port: 42790)
+
+        // A response that completes after selection changed cannot restore the old profile's nodes.
+        fixture.store.applyProxyResponse(Data(#"{"proxies":{"Old Routes":{"type":"Selector","all":["Old Node"]}}}"#.utf8), profileID: fixture.profileA.id)
+        #expect(fixture.store.selectedProfileProxyGroups.map(\.name) == ["B Routes"])
+
+        await fixture.store.selectManagedProfile(fixture.profileA.id)
+        #expect(fixture.store.selectedProfileProxyGroups.map(\.name) == ["A Routes"])
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
+    @Test func coldProfileSelectionLoadsOnlyTheSelectedProfilesNodesOnRefresh() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.usesProfileProxySnapshots = true }
+        await fixture.store.selectManagedProfile(fixture.profileB.id)
+        #expect(fixture.store.selectedProfileProxyGroups.isEmpty)
+        #expect(!fixture.core.isProcessRunning)
+
+        await fixture.store.refreshProxies()
+
+        #expect(fixture.store.selectedProfileProxyGroups.map(\.name) == ["B Routes"])
+        #expect(fixture.store.selectedProfileProxyGroups.flatMap(\.nodes).map(\.name) == ["B Node"])
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
     @Test func deniedTUNApprovalKeepsExistingConnection() async throws {
         let helper = FakePrivilegedTUNRuntime()
         let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
@@ -487,6 +573,25 @@ private struct RuntimeLifecycleFixture {
         try #require(store.lastErrorMessage == nil)
     }
 
+    func prepareDelayedLatencyTests() {
+        controller.state.withLock { $0.latencyResponseDelay = 0.3 }
+        store.proxyGroups = [ProxyGroup(
+            name: "Routes", policy: "Selector", kind: .selector,
+            nodes: (0..<40).map {
+                ProxyNode(name: "Node \($0)", region: "Proxy", latency: nil, isSelected: $0 == 0)
+            }
+        )]
+    }
+
+    func waitForLatencyRequest() async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while controller.state.withLock({ $0.delayRequestCount }) == 0,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(controller.state.withLock { $0.delayRequestCount } > 0)
+    }
+
     func startVPN() async throws {
         await store.toggleRuntime(configPath: store.configPath)
         try #require(store.isStarted, "\(store.lastErrorMessage ?? "VPN did not start")")
@@ -531,6 +636,10 @@ private struct RuntimeLifecycleFixture {
 
 private final class RuntimeControllerFixture: Sendable {
     struct State: Sendable {
+        var endsTrafficStream = false
+        var trafficRequestTimes: [ContinuousClock.Instant] = []
+        var delayRequestCount = 0
+        var latencyResponseDelay: TimeInterval = 0
         var privilegedRunning = false
         var proxyCommands: [SystemProxyCommand] = []
         var tunByProcess: [String: Bool] = [:]
@@ -540,6 +649,7 @@ private final class RuntimeControllerFixture: Sendable {
         var ignoreTun = false
         var selectedProxy: String?
         var rejectCloseConnections = false
+        var usesProfileProxySnapshots = false
     }
 
     let state = Mutex(State())
@@ -632,7 +742,13 @@ private final class RuntimeControllerFixture: Sendable {
                 "tun": ["enable": tunEnabled()]
             ]
         case "/proxies":
-            if let selected = state.withLock({ $0.selectedProxy }) {
+            if state.withLock({ $0.usesProfileProxySnapshots }) {
+                let profile = config.mode == .direct ? "B" : "A"
+                body = ["proxies": [
+                    "\(profile) Routes": ["type": "Selector", "now": "\(profile) Node", "all": ["\(profile) Node"]],
+                    "\(profile) Node": ["type": "Shadowsocks"]
+                ]]
+            } else if let selected = state.withLock({ $0.selectedProxy }) {
                 body = ["proxies": [
                     "Routes": ["type": "Selector", "now": selected, "all": ["Alpha", "Beta"]],
                     "Alpha": ["type": "Shadowsocks"], "Beta": ["type": "Shadowsocks"]
@@ -651,6 +767,7 @@ private final class RuntimeControllerFixture: Sendable {
 
 private final class RuntimeLifecycleURLProtocol: URLProtocol, @unchecked Sendable {
     static let fixtures = Mutex<[String: RuntimeControllerFixture]>([:])
+    private let stopped = Mutex(false)
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -660,20 +777,45 @@ private final class RuntimeLifecycleURLProtocol: URLProtocol, @unchecked Sendabl
             let identifier = request.value(forHTTPHeaderField: "X-Nexora-Test-Fixture") ?? ""
             guard let fixture = Self.fixtures.withLock({ $0[identifier] }),
                   let url = request.url else { throw URLError(.resourceUnavailable) }
+            let delay = fixture.state.withLock { state in
+                if url.path == "/traffic", state.trafficRequestTimes.count < 2 {
+                    state.trafficRequestTimes.append(.now)
+                }
+                if url.path.hasSuffix("/delay") {
+                    state.delayRequestCount += 1
+                    return state.latencyResponseDelay
+                }
+                return 0
+            }
             let (status, data) = try fixture.response(for: request)
-            let response = HTTPURLResponse(
-                url: url, statusCode: status, httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            // Leave the traffic stream open until the owning test cancels its session.
-            if url.path == "/traffic" { return }
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+            let endsTrafficStream = fixture.state.withLock { $0.endsTrafficStream }
+            if delay > 0 {
+                DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+                    self.deliver(url: url, status: status, data: data, endsTrafficStream: endsTrafficStream)
+                }
+            } else {
+                deliver(url: url, status: status, data: data, endsTrafficStream: endsTrafficStream)
+            }
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
-    override func stopLoading() {}
+    private func deliver(url: URL, status: Int, data: Data, endsTrafficStream: Bool) {
+        guard !stopped.withLock({ $0 }) else { return }
+        let response = HTTPURLResponse(
+            url: url, statusCode: status, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        // Leave the traffic stream open until the owning test cancels its session.
+        if url.path == "/traffic" {
+            if endsTrafficStream { client?.urlProtocolDidFinishLoading(self) }
+            return
+        }
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() { stopped.withLock { $0 = true } }
 }

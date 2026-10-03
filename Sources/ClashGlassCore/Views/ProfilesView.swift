@@ -15,16 +15,21 @@ struct ProfilesView: View {
             searchText: $query,
             placeholder: "\(store.text(.search)) \(store.text(.profiles))",
             actions: [
+                .init(
+                    title: store.text(.refresh), symbol: "arrow.clockwise",
+                    isDisabled: store.isRefreshingProfileTrafficUsage
+                        || !store.managedProfiles.contains(where: { $0.subscriptionURL != nil })
+                ) {
+                    Task { await store.refreshManagedProfileTrafficUsage() }
+                },
                 .init(title: store.text(.validateAll), symbol: "checkmark.shield") {
                     Task { await store.validateAllManagedProfiles() }
                 },
                 .init(title: store.text(.openManagedFolder), symbol: "folder") {
                     ConfigurationFilePanel.reveal(store.managedProfilesFolderURL)
                 },
-                .init(title: store.text(.importYAML), symbol: "plus") {
-                    importYAML()
-                },
-            ]
+            ],
+            toolbarTrailing: AnyView(ProfileImportButton(store: store))
         ) {
             if store.managedProfiles.isEmpty {
                 GlassCard(radius: 16, padding: 26) {
@@ -64,7 +69,10 @@ struct ProfilesView: View {
                                     isRunning: profile.id == store.selectedManagedProfileID && store.isStarted,
                                     validationState: store.validationState(for: profile.id),
                                     language: store.language,
+                                    refreshFailed: store.profileTrafficRefreshFailures.contains(profile.id),
                                     select: {
+                                        guard profile.id != store.selectedManagedProfileID,
+                                              !store.isRuntimeTransitioning else { return }
                                         Task { await store.selectManagedProfile(profile.id) }
                                     },
                                     validate: {
@@ -88,8 +96,11 @@ struct ProfilesView: View {
                 }
             }
         }
+        .task { await store.refreshManagedProfileTrafficUsage() }
         .dropDestination(for: URL.self) { urls, _ in
-            let yamlURLs = urls.filter { ["yaml", "yml"].contains($0.pathExtension.lowercased()) }
+            let yamlURLs = urls.filter {
+                $0.isFileURL && ["yaml", "yml"].contains($0.pathExtension.lowercased())
+            }
             for url in yamlURLs {
                 Task { await store.importManagedProfile(from: url) }
             }
@@ -155,6 +166,7 @@ enum ProfileCardActionLayoutMetrics {
     static let spacing: CGFloat = 8
     static let minimumGap: CGFloat = 8
     static let usesStackedFallback = true
+    static let secondaryActionsWidth = CGFloat(ToolbarControlMetrics.hitTarget) * 4 + spacing * 3
 }
 
 private struct ManagedProfileCard: View {
@@ -163,85 +175,174 @@ private struct ManagedProfileCard: View {
     let isRunning: Bool
     let validationState: ProfileValidationState
     let language: AppLanguage
+    let refreshFailed: Bool
     let select: () -> Void
     let validate: () -> Void
     let reveal: () -> Void
     let rename: () -> Void
     let delete: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.clashGlassReduceMotion) private var reduceMotion
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
-        GlassCard(radius: 16, padding: 16) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Image(systemName: isRunning ? "bolt.circle.fill" : isSelected ? "checkmark.seal.fill" : "doc.text.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(isRunning ? palette.green : isSelected ? palette.rose : palette.secondaryText)
-                    Spacer()
-                    StatusChip(
-                        text: isRunning
-                            ? language.text(.running)
-                            : isSelected
-                                ? language.text(.current)
-                                : language.text(.managed),
-                        symbol: nil,
-                        tint: isRunning ? palette.green : isSelected ? palette.rose : nil
-                    )
+        Button(action: select) {
+            GlassCard(radius: 16, padding: 16, selectionTint: isSelected ? palette.rose : nil) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Image(systemName: isRunning ? "bolt.circle.fill" : isSelected ? "checkmark.seal.fill" : "doc.text.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(isRunning ? palette.green : isSelected ? palette.rose : palette.secondaryText)
+                        Spacer()
+                        StatusChip(
+                            text: isRunning
+                                ? language.text(.running)
+                                : isSelected
+                                    ? language.text(.current)
+                                    : language.text(.managed),
+                            symbol: nil,
+                            tint: isRunning ? palette.green : isSelected ? palette.rose : nil
+                        )
+                    }
+                    .allowsHitTesting(false)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(profile.name)
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(palette.primaryText)
+                            .lineLimit(1)
+                        Text(language.text(.managedYAML))
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(palette.secondaryText)
+                        ProfileValidationLine(
+                            state: validationState,
+                            language: language,
+                            palette: palette
+                        )
+                        Text(profile.importedAt, style: .relative)
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(palette.tertiaryText)
+                    }
+                    .allowsHitTesting(false)
+
+                    trafficFooter(palette: palette)
                 }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(profile.name)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(palette.primaryText)
-                        .lineLimit(1)
-                    Text(language.text(.managedYAML))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(palette.secondaryText)
-                    ProfileValidationLine(
-                        state: validationState,
-                        language: language,
-                        palette: palette
-                    )
-                    Text(profile.importedAt, style: .relative)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(palette.tertiaryText)
-                }
-
-                profileActions(palette: palette)
-            }
-            .frame(maxWidth: .infinity, minHeight: 168, alignment: .leading)
-        }
-    }
-
-    private func profileActions(palette: GlassPalette) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: ProfileCardActionLayoutMetrics.spacing) {
-                selectionButton(palette: palette)
-                Spacer(minLength: ProfileCardActionLayoutMetrics.minimumGap)
-                secondaryActionButtons(palette: palette)
-            }
-
-            VStack(alignment: .leading, spacing: ProfileCardActionLayoutMetrics.spacing) {
-                selectionButton(palette: palette)
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    secondaryActionButtons(palette: palette)
-                }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 198, alignment: .leading)
             }
         }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityLabel("\(language.text(.use)) \(profile.name)")
+        .accessibilityValue(selectionAccessibilityValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        // Sibling controls avoid nested buttons and keep their actions independent.
+        .overlay(alignment: .bottomTrailing) {
+            secondaryActionButtons(palette: palette)
+                .padding(16)
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isSelected)
     }
 
-    private func selectionButton(palette: GlassPalette) -> some View {
-        LiquidActionButton(
-            title: isSelected ? language.text(.selected) : language.text(.use),
-            symbol: isSelected ? "checkmark" : "play",
-            tint: isSelected ? palette.rose.opacity(0.24) : nil,
-            compact: true,
-            action: select
+    private func trafficFooter(palette: GlassPalette) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let fraction = profile.trafficUsage?.remainingFraction {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(palette.selectionTrack)
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [palette.rose.opacity(0.65), palette.rose],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: geometry.size.width * fraction)
+                    }
+                    .overlay {
+                        Capsule().strokeBorder(palette.cardStroke.opacity(0.6), lineWidth: 0.5)
+                    }
+                }
+                .frame(height: 6)
+                .accessibilityHidden(true)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: ProfileCardActionLayoutMetrics.spacing) {
+                    trafficLabels(palette: palette)
+                    Spacer(minLength: ProfileCardActionLayoutMetrics.minimumGap)
+                    actionSpace
+                }
+
+                VStack(alignment: .leading, spacing: ProfileCardActionLayoutMetrics.spacing) {
+                    trafficLabels(palette: palette)
+                    actionSpace.frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        }
+        .help(trafficUsageHelp)
+    }
+
+    private var actionSpace: some View {
+        Color.clear
+            .frame(
+                width: ProfileCardActionLayoutMetrics.secondaryActionsWidth,
+                height: CGFloat(ToolbarControlMetrics.hitTarget)
+            )
+            .accessibilityHidden(true)
+    }
+
+    private func trafficLabels(palette: GlassPalette) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(remainingGBText)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(palette.primaryText)
+            Text(remainingPercentText)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+        }
+        .monospacedDigit()
+        .frame(minWidth: 100, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var remainingGBText: String {
+        guard let gigabytes = profile.trafficUsage?.remainingGigabytes else {
+            return language.text(.profileTrafficUnavailable)
+        }
+        let value = gigabytes.formatted(.number.precision(.fractionLength(2)).locale(language.locale))
+        return String(format: language.text(.profileTrafficLeftGBFormat), value)
+    }
+
+    private var remainingPercentText: String {
+        if refreshFailed { return language.text(.profileTrafficRefreshFailed) }
+        guard let fraction = profile.trafficUsage?.remainingFraction else {
+            if profile.trafficUsage?.remainingBytes != nil {
+                return language.text(.profileTrafficSnapshot)
+            }
+            return language.text(profile.subscriptionURL == nil ? .profileTrafficLocal : .profileTrafficNotReported)
+        }
+        let value = fraction.formatted(.percent.precision(.fractionLength(1)).locale(language.locale))
+        return String(format: language.text(.profileTrafficLeftPercentFormat), value)
+    }
+
+    private var trafficUsageHelp: String {
+        guard let usage = profile.trafficUsage, usage.remainingBytes != nil else {
+            return language.text(profile.subscriptionURL == nil ? .profileTrafficLocalHelp : .profileTrafficNotReportedHelp)
+        }
+        let date = usage.updatedAt.formatted(
+            .dateTime.month().day().hour().minute().locale(language.locale)
         )
-        .fixedSize(horizontal: true, vertical: false)
+        let key: AppString = usage.source == .configuration || profile.subscriptionURL == nil
+            ? .profileTrafficSnapshotHelpFormat : .profileTrafficUpdatedFormat
+        let description = String(format: language.text(key), date)
+        return refreshFailed ? description + "\n" + language.text(.profileTrafficRefreshFailed) : description
+    }
+
+    private var selectionAccessibilityValue: String {
+        [isSelected ? language.text(.selected) : "", remainingGBText, remainingPercentText]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 
     private func secondaryActionButtons(palette: GlassPalette) -> some View {

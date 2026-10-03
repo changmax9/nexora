@@ -41,6 +41,11 @@ public final class MihomoCoreService {
         process?.isRunning == true || privilegedTUN?.isRunning == true
     }
 
+    var processIdentifier: Int? {
+        guard let process, process.isRunning else { return nil }
+        return Int(process.processIdentifier)
+    }
+
     public var supportsPrivilegedTUN: Bool { privilegedTUN != nil }
     public var isPrivilegedRunning: Bool { privilegedTUN?.isRunning == true }
     public func authorizeTUN() throws { try privilegedTUN?.authorize() }
@@ -262,17 +267,35 @@ public final class MihomoCoreService {
             process.standardError = output
             do {
                 try process.run()
+                // Drain while the child runs: a full pipe otherwise prevents it exiting.
+                var tail = CoreOutputTail()
+                while let chunk = try output.fileHandleForReading.read(upToCount: 16_384), !chunk.isEmpty {
+                    tail.append(chunk)
+                }
                 process.waitUntilExit()
-                let data = output.fileHandleForReading.readDataToEndOfFile()
-                let message = String(data: data, encoding: .utf8)?
-                    .split(whereSeparator: \.isNewline)
-                    .last
-                    .map(String.init) ?? "Mihomo rejected the configuration."
-                return process.terminationStatus == 0 ? .success : .failure(message)
+                return process.terminationStatus == 0 ? .success : .failure(
+                    Self.validationFailureMessage(from: tail.text, configPath: path)
+                )
             } catch {
                 return .failure(error.localizedDescription)
             }
         }.value
+    }
+
+    nonisolated static func validationFailureMessage(from output: String, configPath: String) -> String {
+        let lines = output
+            .replacingOccurrences(of: "\u{001B}\\[[0-9;]*m", with: "", options: .regularExpression)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        let detail = lines.last { $0.contains("level=error") || $0.contains("Parse config error:") }
+            ?? lines.last { !($0.hasPrefix("configuration file ") && $0.hasSuffix(" test failed")) }
+        guard var message = detail else { return "Mihomo rejected the configuration." }
+        if let range = message.range(of: "msg=") {
+            let encodedMessage = String(message[range.upperBound...])
+            message = (try? JSONDecoder().decode(String.self, from: Data(encodedMessage.utf8)))
+                ?? encodedMessage
+        }
+        return message.replacingOccurrences(of: configPath, with: "configuration")
     }
 
     public nonisolated func ensureLaunchConfig(path: String) throws {
@@ -375,9 +398,28 @@ public final class MihomoCoreService {
     }
 }
 
-private final class CoreOutputSink: @unchecked Sendable {
-    private let lock = NSLock()
+private struct CoreOutputTail {
+    private static let capacity = 65_536
     private var data = Data()
+
+    mutating func append(_ chunk: Data) {
+        if chunk.count >= Self.capacity {
+            data = chunk.subdata(in: (chunk.endIndex - Self.capacity)..<chunk.endIndex)
+        } else {
+            data.append(chunk)
+            if data.count > Self.capacity {
+                data = data.subdata(in: (data.endIndex - Self.capacity)..<data.endIndex)
+            }
+        }
+    }
+
+    // Trimming can split the first UTF-8 character; preserve the remaining log.
+    var text: String { String(decoding: data, as: UTF8.self) }
+}
+
+final class CoreOutputSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tail = CoreOutputTail()
     private var logHandle: FileHandle?
 
     init(logURL: URL) {
@@ -388,14 +430,14 @@ private final class CoreOutputSink: @unchecked Sendable {
     func append(_ newData: Data) {
         lock.lock()
         defer { lock.unlock() }
-        data.append(newData)
+        tail.append(newData)
         try? logHandle?.write(contentsOf: newData)
     }
 
     var text: String {
         lock.lock()
         defer { lock.unlock() }
-        return String(data: data, encoding: .utf8) ?? ""
+        return tail.text
     }
 
     var lastMeaningfulLine: String? {

@@ -26,7 +26,11 @@ struct DiagnosticsView: View {
                 FeatureAction(title: store.text(.copyReport), symbol: "doc.on.doc", isDisabled: store.networkDiagnosticReport.findings.isEmpty) {
                     copyNetworkDoctorReport(store.networkDiagnosticReport.copyText)
                 },
-                FeatureAction(title: store.text(.diagnose), symbol: "stethoscope") {
+                FeatureAction(
+                    title: store.text(.diagnose) + (store.isRunningNetworkDiagnosis ? "…" : ""),
+                    symbol: store.isRunningNetworkDiagnosis ? "hourglass" : "stethoscope",
+                    isDisabled: store.isRunningNetworkDiagnosis
+                ) {
                     Task {
                         await store.runNetworkDiagnosis()
                     }
@@ -177,6 +181,11 @@ private struct DiagnosticsStatusStrip: View {
         let tint = diagnosticTint(report.severity, palette: palette)
 
         HStack(spacing: 8) {
+            if store.isRunningNetworkDiagnosis {
+                ProgressView().controlSize(.small)
+                Text(store.text(.diagnose) + "…")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+            }
             StatusChip(
                 text: severityTitle(report.severity, language: store.language),
                 symbol: report.severity.symbol,
@@ -339,7 +348,12 @@ private struct PortRadarList: View {
                 DiagnosticPlaceholderRow(text: store.text(.networkDiagnosisHint), symbol: "dot.radiowaves.left.and.right")
             } else {
                 ForEach(store.networkPortChecks) { check in
-                    PortRadarRow(check: check)
+                    PortRadarRow(
+                        check: check,
+                        severity: store.networkDiagnosticReport.findings.first {
+                            $0.title == "\(check.label) :\(check.port)"
+                        }?.severity
+                    )
                 }
             }
         }
@@ -348,12 +362,14 @@ private struct PortRadarList: View {
 
 private struct PortRadarRow: View {
     let check: NetworkPortCheck
+    let severity: NetworkDiagnosticSeverity?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
         HStack(spacing: 11) {
-            DiagnosticStateDot(color: check.isListening ? palette.green : palette.tertiaryText.opacity(0.65))
+            DiagnosticStateDot(color: severity.map { diagnosticTint($0, palette: palette) }
+                ?? (check.isListening ? palette.green : palette.tertiaryText.opacity(0.65)))
             Text(check.label)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(palette.primaryText)

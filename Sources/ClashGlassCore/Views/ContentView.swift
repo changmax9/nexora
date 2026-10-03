@@ -58,9 +58,13 @@ public struct ContentView: View {
         }
         .task {
             await store.refreshNetworkIdentity()
-            while !Task.isCancelled {
+        }
+        .task(id: store.isCoreRunning || store.isStarted) {
+            guard store.isCoreRunning || store.isStarted else { return }
+            while !Task.isCancelled, store.isCoreRunning || store.isStarted {
                 await store.runtimeTick()
-                try? await Task.sleep(for: .milliseconds(500))
+                do { try await Task.sleep(for: .milliseconds(500)) }
+                catch { return }
             }
         }
     }

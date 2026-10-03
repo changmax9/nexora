@@ -431,12 +431,22 @@ public enum MenuBarPanelMotion {
     public static let fadeOutDuration: TimeInterval = 0.24
 }
 
-struct ConnectionEntry: Identifiable {
-    let id = UUID()
-    var remoteID: String? = nil
+struct ConnectionEntry: Identifiable, Equatable {
+    let id: String
+    let remoteID: String?
     let host: String
     let rule: String
     let chain: String
     let upload: String
     let download: String
+
+    init(remoteID: String? = nil, host: String, rule: String, chain: String, upload: String, download: String) {
+        self.remoteID = remoteID.flatMap { $0.isEmpty ? nil : $0 }
+        id = self.remoteID ?? UUID().uuidString
+        self.host = host
+        self.rule = rule
+        self.chain = chain
+        self.upload = upload
+        self.download = download
+    }
 }

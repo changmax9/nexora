@@ -140,11 +140,16 @@ struct GlassCard<Content: View>: View {
     @State private var isHovering = false
     let radius: CGFloat
     let padding: CGFloat
+    let selectionTint: Color?
     @ViewBuilder let content: Content
 
-    init(radius: CGFloat = 26, padding: CGFloat = 28, @ViewBuilder content: () -> Content) {
+    init(
+        radius: CGFloat = 26, padding: CGFloat = 28, selectionTint: Color? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
         self.radius = radius
         self.padding = padding
+        self.selectionTint = selectionTint
         self.content = content()
     }
 
@@ -156,11 +161,32 @@ struct GlassCard<Content: View>: View {
             .modifier(TileGlassSurface(radius: radius, interactive: true))
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .strokeBorder(
-                    isHovering ? palette.selectionStroke.opacity(0.82) : palette.cardStroke,
-                    lineWidth: isHovering ? 1.25 : 0.9
-                )
+            if let selectionTint {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                selectionTint.opacity(0.95),
+                                selectionTint.opacity(0.42),
+                                selectionTint.opacity(0.85),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 2
+                    )
+                    .shadow(color: selectionTint.opacity(0.28), radius: 5)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            } else {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(
+                        isHovering ? palette.selectionStroke.opacity(0.82) : palette.cardStroke,
+                        lineWidth: isHovering ? 1.25 : 0.9
+                    )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .scaleEffect(GlassCardMotion.scale(isHovering: isHovering, reduceMotion: reduceMotion))

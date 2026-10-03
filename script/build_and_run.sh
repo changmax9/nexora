@@ -2,7 +2,11 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
+if [[ "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
+  BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
+else
+  BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-release}"
+fi
 # Xcode 27's SwiftPM build backend currently records the deployment target as
 # LC_BUILD_VERSION.sdk (15.0), which opts AppKit into legacy window controls.
 # The native backend records the selected SDK correctly. Keep this overridable
@@ -12,7 +16,7 @@ MACOS_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 APP_NAME="Nexora"
 BUNDLE_ID="com.maxchang.Nexora"
 MIN_SYSTEM_VERSION="15.0"
-APP_VERSION="${APP_VERSION:-0.2.0}"
+APP_VERSION="${APP_VERSION:-0.2.1}"
 if [[ ! "$APP_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
   echo "error: APP_VERSION must have the form 1.2.3" >&2
   exit 2
@@ -74,6 +78,9 @@ mkdir -p "$APP_FRAMEWORKS"
 mkdir -p "$APP_CONTENTS/Library/LaunchDaemons"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$(dirname "$BUILD_BINARY")/NexoraTUNHelper" "$APP_MACOS/NexoraTUNHelper"
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+  /usr/bin/strip -S "$APP_BINARY" "$APP_MACOS/NexoraTUNHelper"
+fi
 chmod +x "$APP_BINARY"
 if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
   cp -R "$SPARKLE_FRAMEWORK" "$APP_FRAMEWORKS/"

@@ -48,13 +48,13 @@ import Testing
     let request = try MihomoAPIRequest(baseURL: URL(string: "http://127.0.0.1:9090")!)
         .urlRequest(
             for: .delayTest(
-                proxy: "防失联网址 https://mutdot.org",
+                proxy: "防失联网址 https://example.test",
                 url: "http://www.gstatic.com/generate_204",
                 timeout: 5000
             )
         )
 
-    #expect(request.url?.absoluteString.contains("https:%2F%2Fmutdot.org/delay") == true)
+    #expect(request.url?.absoluteString.contains("https:%2F%2Fexample.test/delay") == true)
 }
 
 @Test func mihomoAPIRequestBuildsRuntimeConfigurationEndpoints() throws {
@@ -140,7 +140,7 @@ import Testing
     let data = """
     {
       "proxies": {
-        "Mutdot": {
+        "SampleRoutes": {
           "type":"Selector",
           "now":"自动选择",
           "all":["自动选择","香港HK04","日本JP04"]
@@ -158,7 +158,7 @@ import Testing
     """.data(using: .utf8)!
 
     let groups = try MihomoAPIDecoder.proxyGroups(from: data)
-    let selector = try #require(groups.first { $0.name == "Mutdot" })
+    let selector = try #require(groups.first { $0.name == "SampleRoutes" })
     let automatic = try #require(groups.first { $0.name == "自动选择" })
 
     #expect(selector.kind == .selector)
@@ -184,7 +184,7 @@ import Testing
             ]
         ),
         ProxyGroup(
-            name: "Mutdot",
+            name: "SampleRoutes",
             policy: "Selector",
             kind: .selector,
             nodes: [
@@ -210,17 +210,17 @@ import Testing
         selectedGroupName: "自动选择",
         nodeName: "日本JP04",
         groups: groups
-    ) == "Mutdot")
+    ) == "SampleRoutes")
     #expect(ProxySelectionResolver.targetGroup(
-        selectedGroupName: "Mutdot",
+        selectedGroupName: "SampleRoutes",
         nodeName: "香港HK04",
         groups: groups
-    ) == "Mutdot")
+    ) == "SampleRoutes")
     #expect(ProxySelectionResolver.targetGroups(
         selectedGroupName: "GLOBAL",
         nodeName: "新加坡SG01",
         groups: groups
-    ) == ["GLOBAL", "Mutdot"])
+    ) == ["GLOBAL", "SampleRoutes"])
 }
 
 @Test func latencyRefreshPublishesUsefulProgressWhileTesting() {
@@ -465,7 +465,7 @@ import Testing
             ]
         ),
         ProxyGroup(
-            name: "Mutdot",
+            name: "SampleRoutes",
             policy: "Selector",
             kind: .selector,
             nodes: [
@@ -482,7 +482,7 @@ import Testing
         ),
     ]
 
-    #expect(store.menuBarSelector?.name == "Mutdot")
+    #expect(store.menuBarSelector?.name == "SampleRoutes")
     #expect(store.menuBarProxyNodes.map(\.name) == ["自动选择", "香港HK01", "新加坡SG01"])
     #expect(store.menuBarSelectedNodeName == "新加坡SG01")
 }
@@ -492,7 +492,7 @@ import Testing
     let store = AppStore()
     store.proxyGroups = [
         ProxyGroup(
-            name: "Mutdot",
+            name: "SampleRoutes",
             policy: "Selector",
             kind: .selector,
             nodes: [
@@ -616,7 +616,7 @@ import Testing
     let data = """
     {
       "success": true,
-      "ip": "151.243.38.149",
+      "ip": "203.0.113.149",
       "country_code": "HK",
       "country": "Hong Kong"
     }
@@ -624,14 +624,14 @@ import Testing
 
     let identity = try NetworkIdentityDecoder.decode(data)
 
-    #expect(identity.ip == "151.243.38.149")
+    #expect(identity.ip == "203.0.113.149")
     #expect(identity.countryCode == "HK")
     #expect(identity.countryName == "Hong Kong")
     #expect(identity.flagEmoji == "🇭🇰")
 }
 
 @Test func networkIdentityAcceptsOnlyIPv4ForDashboardDisplay() {
-    #expect(NetworkAddressPolicy.isIPv4("151.243.38.149"))
+    #expect(NetworkAddressPolicy.isIPv4("203.0.113.149"))
     #expect(!NetworkAddressPolicy.isIPv4("2409:8a1e:14f2:a890:48fb:e3f0:1"))
     #expect(!NetworkAddressPolicy.isIPv4("999.1.1.1"))
 }

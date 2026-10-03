@@ -100,6 +100,8 @@ public final class AppStore {
     public var selectedProfile = "No Profile"
     public var configPath = "\(NSHomeDirectory())/.config/clash/config.yaml"
     public private(set) var managedProfiles: [ManagedProfile] = []
+    public private(set) var isRefreshingProfileTrafficUsage = false
+    public private(set) var profileTrafficRefreshFailures: Set<ManagedProfile.ID> = []
     public private(set) var selectedManagedProfileID: ManagedProfile.ID?
     var routingOverrides: [RoutingOverride] = []
     public private(set) var controllerURL = URL(string: "http://127.0.0.1:9090")!
@@ -109,6 +111,7 @@ public final class AppStore {
     public var networkCountryName = ""
     public var networkEgressKind: NetworkEgressKind = .detecting
     public private(set) var networkDiagnosticReport = NetworkDiagnosticReport.placeholder
+    public private(set) var isRunningNetworkDiagnosis = false
     public private(set) var networkPortChecks: [NetworkPortCheck] = []
     public private(set) var networkDNSChecks: [NetworkDNSCheck] = []
     public private(set) var networkEndpointChecks: [NetworkEndpointCheck] = []
@@ -126,7 +129,13 @@ public final class AppStore {
     var latencyTestProgress = LatencyTestProgress(completed: 0, total: 0)
     public var speedSamples: [Double] = Array(repeating: 0, count: 28)
 
-    var proxyGroups: [ProxyGroup] = []
+    var proxyGroups: [ProxyGroup] = [] {
+        didSet { proxySnapshotProfileID = selectedManagedProfileID }
+    }
+    private var proxySnapshotProfileID: ManagedProfile.ID?
+    var selectedProfileProxyGroups: [ProxyGroup] {
+        proxySnapshotProfileID == selectedManagedProfileID ? proxyGroups : []
+    }
     var menuBarPreferredGroupName: String?
     var connections: [ConnectionEntry] = []
 
@@ -247,16 +256,80 @@ public final class AppStore {
     }
 
     public func importManagedProfile(from sourceURL: URL) async {
-        await beginRuntimeTransition()
-        defer { endRuntimeTransition() }
         do {
-            let profile = try await profileRepository.importProfile(from: sourceURL) { [coreService] stagedURL in
-                await coreService.validateConfig(path: stagedURL.path)
-            }
-            _ = await activateManagedProfile(profile)
-            profileValidationStates[profile.id] = .valid()
+            _ = try await importManagedProfileFile(from: sourceURL)
         } catch {
             lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    public func importManagedProfile(
+        fromRemoteURL sourceURL: URL,
+        downloader: ManagedProfileDownloader = ManagedProfileDownloader()
+    ) async throws -> Bool {
+        let download = try await downloader.download(from: sourceURL)
+        try Task.checkCancellation()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("config.yaml")
+        try download.data.write(to: fileURL, options: .atomic)
+        return try await importManagedProfileFile(
+            from: fileURL, name: download.name,
+            subscriptionURL: sourceURL, trafficUsage: download.trafficUsage
+        )
+    }
+
+    private func importManagedProfileFile(
+        from sourceURL: URL, name: String? = nil,
+        subscriptionURL: URL? = nil, trafficUsage: ProfileTrafficUsage? = nil
+    ) async throws -> Bool {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        try Task.checkCancellation()
+        let profile = try await profileRepository.importProfile(
+            from: sourceURL, name: name,
+            subscriptionURL: subscriptionURL, trafficUsage: trafficUsage
+        ) { [coreService] stagedURL in
+            await coreService.validateConfig(path: stagedURL.path)
+        }
+        let activated = await activateManagedProfile(profile)
+        profileValidationStates[profile.id] = .valid()
+        return activated
+    }
+
+    public func refreshManagedProfileTrafficUsage(
+        downloader: ManagedProfileDownloader = ManagedProfileDownloader()
+    ) async {
+        guard !isRefreshingProfileTrafficUsage else { return }
+        isRefreshingProfileTrafficUsage = true
+        defer { isRefreshingProfileTrafficUsage = false }
+        for profile in managedProfiles {
+            guard !Task.isCancelled else { return }
+            guard let url = profile.subscriptionURL else { continue }
+            do {
+                let download = try await downloader.download(from: url)
+                try Task.checkCancellation()
+                guard let index = managedProfiles.firstIndex(where: { $0.id == profile.id }) else { continue }
+                guard let usage = download.trafficUsage else {
+                    profileTrafficRefreshFailures.insert(profile.id)
+                    continue
+                }
+                // Refresh quota metadata only; the saved YAML and active runtime stay intact.
+                try profileRepository.updateTrafficUsage(usage, for: profile.id)
+                managedProfiles[index].trafficUsage = usage
+                profileTrafficRefreshFailures.remove(profile.id)
+            } catch is CancellationError {
+                return
+            } catch {
+                // Keep the last provider snapshot when offline or when a profile was deleted.
+                guard !Task.isCancelled else { return }
+                if managedProfiles.contains(where: { $0.id == profile.id }) {
+                    profileTrafficRefreshFailures.insert(profile.id)
+                }
+            }
         }
     }
 
@@ -286,6 +359,7 @@ public final class AppStore {
             try profileRepository.remove(id)
             try? routingOverrideRepository.removeProfile(id)
             profileValidationStates.removeValue(forKey: id)
+            profileTrafficRefreshFailures.remove(id)
             reloadManagedProfiles()
             reloadRoutingOverrides()
             if selectedManagedProfile == nil {
@@ -651,7 +725,7 @@ public final class AppStore {
     }
 
     public func delayTestAll() async {
-        guard !isLatencyTesting else {
+        guard !isLatencyTesting, !Task.isCancelled else {
             return
         }
         isLatencyTesting = true
@@ -659,7 +733,7 @@ public final class AppStore {
         await beginRuntimeTransition()
         let controllerAvailable = await ensureControllerAvailable(configPath: configPath)
         endRuntimeTransition()
-        guard controllerAvailable else {
+        guard controllerAvailable, !Task.isCancelled else {
             return
         }
         let settings = latencyTestSettings
@@ -683,24 +757,31 @@ public final class AppStore {
         var fallbackTestsByName = Dictionary(
             uniqueKeysWithValues: plan.fallbackTests.map { ($0.proxyName, $0) }
         )
+        func isCurrentTest() -> Bool {
+            !Task.isCancelled && generation == runtimeGeneration
+        }
         func publish(
             delays: [String: Int],
             completed names: Set<String>
         ) {
-            guard generation == runtimeGeneration else { return }
+            guard isCurrentTest() else { return }
             completedNodeNames.formUnion(names)
             latencyTestProgress = LatencyTestProgress(
                 completed: completedNodeNames.count,
                 total: plan.nodeNames.count
             )
             successfulNodeNames.formUnion(delays.keys)
-            for (nodeName, latency) in delays {
-                for groupIndex in proxyGroups.indices {
-                    for nodeIndex in proxyGroups[groupIndex].nodes.indices
-                    where proxyGroups[groupIndex].nodes[nodeIndex].name == nodeName {
-                        proxyGroups[groupIndex].nodes[nodeIndex].latency = latency
+            if !delays.isEmpty {
+                var updatedGroups = proxyGroups
+                for groupIndex in updatedGroups.indices {
+                    for nodeIndex in updatedGroups[groupIndex].nodes.indices {
+                        let nodeName = updatedGroups[groupIndex].nodes[nodeIndex].name
+                        if let latency = delays[nodeName] {
+                            updatedGroups[groupIndex].nodes[nodeIndex].latency = latency
+                        }
                     }
                 }
+                proxyGroups = updatedGroups
             }
         }
 
@@ -709,6 +790,7 @@ public final class AppStore {
             to: plan.groupTests.count,
             by: LatencyTestPlan.maximumConcurrentGroupTests
         ) {
+            guard isCurrentTest() else { return }
             let batchEnd = min(
                 batchStart + LatencyTestPlan.maximumConcurrentGroupTests,
                 plan.groupTests.count
@@ -726,6 +808,10 @@ public final class AppStore {
                     }
                 }
                 for await (test, delays) in taskGroup {
+                    guard isCurrentTest() else {
+                        taskGroup.cancelAll()
+                        break
+                    }
                     let validDelays = delays.filter { nodeName, delay in
                         test.nodeNames.contains(nodeName)
                             && LatencyTestSettings.validMeasuredDelay(delay) != nil
@@ -747,6 +833,7 @@ public final class AppStore {
             to: fallbackTests.count,
             by: LatencyTestPlan.maximumConcurrentFallbackTests
         ) {
+            guard isCurrentTest() else { return }
             let batchEnd = min(
                 batchStart + LatencyTestPlan.maximumConcurrentFallbackTests,
                 fallbackTests.count
@@ -764,6 +851,10 @@ public final class AppStore {
                     }
                 }
                 for await (nodeName, latency) in taskGroup {
+                    guard isCurrentTest() else {
+                        taskGroup.cancelAll()
+                        break
+                    }
                     publish(
                         delays: latency.map { [nodeName: $0] } ?? [:],
                         completed: [nodeName]
@@ -771,7 +862,7 @@ public final class AppStore {
                 }
             }
         }
-        guard generation == runtimeGeneration else { return }
+        guard isCurrentTest() else { return }
         lastErrorMessage = !successfulNodeNames.isEmpty
             ? nil
             : "No proxy returned a successful delay measurement."
@@ -858,13 +949,13 @@ public final class AppStore {
 
     private func fetchProxies() async {
         let generation = runtimeGeneration
+        let profileID = selectedManagedProfileID
         do {
             let data = try await apiService.data(for: .proxies)
-            guard generation == runtimeGeneration else { return }
-            applyProxyResponse(data)
-            lastErrorMessage = nil
+            guard generation == runtimeGeneration, profileID == selectedManagedProfileID else { return }
+            applyProxyResponse(data, profileID: profileID)
         } catch {
-            guard generation == runtimeGeneration else { return }
+            guard generation == runtimeGeneration, profileID == selectedManagedProfileID else { return }
             lastErrorMessage = error.localizedDescription
         }
     }
@@ -894,9 +985,14 @@ public final class AppStore {
     }
 
     public func applyProxyResponse(_ data: Data) {
+        applyProxyResponse(data, profileID: selectedManagedProfileID)
+    }
+
+    func applyProxyResponse(_ data: Data, profileID: ManagedProfile.ID?) {
+        guard profileID == selectedManagedProfileID else { return }
         do {
             let measuredLatencies = Dictionary(
-                proxyGroups
+                selectedProfileProxyGroups
                     .flatMap(\.nodes)
                     .compactMap { node in
                         node.latency.map { (node.name, $0) }
@@ -921,7 +1017,9 @@ public final class AppStore {
     public func applyConnectionsResponse(_ data: Data) {
         do {
             let snapshot = try MihomoAPIDecoder.connectionsSnapshot(from: data)
-            connections = snapshot.entries
+            if connections != snapshot.entries {
+                connections = snapshot.entries
+            }
             trafficUsageTotals = TrafficUsageTotals(
                 uploadBytes: snapshot.uploadTotal,
                 downloadBytes: snapshot.downloadTotal
@@ -1045,6 +1143,9 @@ public final class AppStore {
     }
 
     public func runNetworkDiagnosis() async {
+        guard !isRunningNetworkDiagnosis else { return }
+        isRunningNetworkDiagnosis = true
+        defer { isRunningNetworkDiagnosis = false }
         await refreshNetworkIdentity()
         let activeSystemTunnel = await networkIdentityService.hasActiveSystemTunnel()
         let targets = NetworkPortTarget.standard(
@@ -1075,7 +1176,8 @@ public final class AppStore {
                 selectedProfile: menuBarProfileTitle,
                 portChecks: networkPortChecks,
                 dnsChecks: networkDNSChecks,
-                endpointChecks: networkEndpointChecks
+                endpointChecks: networkEndpointChecks,
+                coreProcessID: coreService.processIdentifier
             )
         )
     }
@@ -1122,21 +1224,30 @@ public final class AppStore {
     private func startTrafficStream() {
         stopTrafficStream()
         let service = apiService
+        let generation = runtimeGeneration
         trafficStreamTask = Task { [weak self] in
+            var retryMilliseconds = 350
             while !Task.isCancelled, self?.isStarted == true {
                 do {
                     for try await data in service.lineDataStream(for: .traffic) {
-                        guard !Task.isCancelled, let self, self.isStarted else {
+                        guard !Task.isCancelled, let self, self.isStarted,
+                              generation == self.runtimeGeneration else {
                             return
                         }
                         self.applyLiveTrafficResponse(data)
+                        retryMilliseconds = 350
                     }
                 } catch {
                     guard !Task.isCancelled else {
                         return
                     }
-                    try? await Task.sleep(for: .milliseconds(350))
                 }
+                // An empty successful response also needs backoff, or EOF creates a tight loop.
+                guard !Task.isCancelled, self?.isStarted == true,
+                      self?.runtimeGeneration == generation else { return }
+                do { try await Task.sleep(for: .milliseconds(retryMilliseconds)) }
+                catch { return }
+                retryMilliseconds = min(retryMilliseconds * 2, 5_000)
             }
         }
     }

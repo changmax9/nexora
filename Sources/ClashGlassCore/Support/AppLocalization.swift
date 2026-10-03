@@ -113,6 +113,18 @@ public enum AppString: String, CaseIterable, Sendable {
     case openManagedFolder
     case importYAML
     case importConfiguration
+    case importFromFile
+    case importFileHint
+    case importFromURL
+    case importURLHint
+    case profileURL
+    case downloadAndImport
+    case importingProfile
+    case invalidProfileURL
+    case profileDownloadHTTPErrorFormat
+    case profileDownloadInvalidResponse
+    case profileDownloadEmpty
+    case profileDownloadNotConfiguration
     case noMatchingProfiles
     case allProfiles
     case deleteProfile
@@ -121,6 +133,17 @@ public enum AppString: String, CaseIterable, Sendable {
     case current
     case managed
     case selected
+    case profileTrafficLeftGBFormat
+    case profileTrafficLeftPercentFormat
+    case profileTrafficUnavailable
+    case profileTrafficUpdatedFormat
+    case profileTrafficSnapshot
+    case profileTrafficSnapshotHelpFormat
+    case profileTrafficLocal
+    case profileTrafficLocalHelp
+    case profileTrafficNotReported
+    case profileTrafficNotReportedHelp
+    case profileTrafficRefreshFailed
     case use
     case validate
     case notValidated
@@ -275,6 +298,29 @@ enum AppLocalization {
 
     private static let translations: [AppLanguage: [AppString: String]] = [
         .english: [
+            .profileDownloadNotConfiguration: "The server did not return a Clash/Mihomo YAML configuration. Copy the Clash/Mihomo subscription link from your provider.",
+            .profileTrafficSnapshot: "YAML snapshot",
+            .profileTrafficSnapshotHelpFormat: "YAML snapshot from %@. Import a subscription URL for live quota updates.",
+            .profileTrafficLocal: "Local YAML",
+            .profileTrafficLocalHelp: "This local YAML does not include quota information. Import the subscription URL to retrieve provider usage.",
+            .profileTrafficNotReported: "No provider quota",
+            .profileTrafficNotReportedHelp: "The subscription server did not provide quota information.",
+            .profileTrafficRefreshFailed: "Refresh failed; showing the last saved usage.",
+            .profileTrafficLeftGBFormat: "%@ GB left",
+            .profileTrafficLeftPercentFormat: "%@ left",
+            .profileTrafficUnavailable: "Traffic unavailable",
+            .profileTrafficUpdatedFormat: "Provider usage updated %@",
+            .importFromFile: "Import from File",
+            .importFileHint: "Choose or drag in a YAML file",
+            .importFromURL: "Import from URL",
+            .importURLHint: "Paste a link to a Mihomo YAML configuration.",
+            .profileURL: "Profile URL",
+            .downloadAndImport: "Download & Import",
+            .importingProfile: "Importing…",
+            .invalidProfileURL: "Enter a valid http:// or https:// URL.",
+            .profileDownloadHTTPErrorFormat: "Download failed (HTTP %d).",
+            .profileDownloadInvalidResponse: "The server did not return a valid HTTP response.",
+            .profileDownloadEmpty: "The downloaded configuration is empty.",
             .glassAppearance: "Glass & Blur",
             .blurStrength: "Blur strength",
             .glassBlurHint: "Higher values create a more frosted background and cards. Text and controls stay sharp.",
@@ -403,6 +449,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "The managed YAML copy and its saved routing overrides will be removed.",
         ],
         .simplifiedChinese: [
+            .profileDownloadNotConfiguration: "服务器返回的内容不是 Clash/Mihomo YAML 配置。请从服务商后台复制 Clash/Mihomo 格式的订阅链接。",
+            .profileTrafficSnapshot: "配置快照",
+            .profileTrafficSnapshotHelpFormat: "配置快照时间：%@。通过订阅链接导入可刷新配额。",
+            .profileTrafficLocal: "本地配置",
+            .profileTrafficLocalHelp: "此本地 YAML 未包含配额信息。通过订阅链接导入可获取服务商流量信息。",
+            .profileTrafficNotReported: "未返回配额",
+            .profileTrafficNotReportedHelp: "订阅服务器没有提供流量配额信息。",
+            .profileTrafficRefreshFailed: "刷新失败，保留上次流量数据。",
+            .profileTrafficLeftGBFormat: "剩余 %@ GB",
+            .profileTrafficLeftPercentFormat: "剩余 %@",
+            .profileTrafficUnavailable: "暂无流量信息",
+            .profileTrafficUpdatedFormat: "订阅流量更新于 %@",
+            .importFromFile: "从文件导入",
+            .importFileHint: "选择或拖入 YAML 文件",
+            .importFromURL: "从网址导入",
+            .importURLHint: "粘贴 Mihomo YAML 配置的网址。",
+            .profileURL: "配置网址",
+            .downloadAndImport: "下载并导入",
+            .importingProfile: "正在导入…",
+            .invalidProfileURL: "请输入有效的 http:// 或 https:// 网址。",
+            .profileDownloadHTTPErrorFormat: "下载失败（HTTP %d）。",
+            .profileDownloadInvalidResponse: "服务器未返回有效的 HTTP 响应。",
+            .profileDownloadEmpty: "下载的配置为空。",
             .glassAppearance: "玻璃与模糊",
             .blurStrength: "模糊程度",
             .glassBlurHint: "数值越高，窗口背景和卡片的磨砂感越强。文字和按钮始终清晰。",
@@ -486,6 +555,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "托管的 YAML 副本及其保存的路由规则将被删除。",
         ],
         .traditionalChinese: [
+            .profileDownloadNotConfiguration: "伺服器回傳的內容不是 Clash/Mihomo YAML 設定。請從服務商後台複製 Clash/Mihomo 格式的訂閱連結。",
+            .profileTrafficSnapshot: "設定快照",
+            .profileTrafficSnapshotHelpFormat: "設定快照時間：%@。透過訂閱連結匯入可更新配額。",
+            .profileTrafficLocal: "本機設定",
+            .profileTrafficLocalHelp: "此本機 YAML 未包含配額資訊。透過訂閱連結匯入可取得服務商流量資訊。",
+            .profileTrafficNotReported: "未回傳配額",
+            .profileTrafficNotReportedHelp: "訂閱伺服器沒有提供流量配額資訊。",
+            .profileTrafficRefreshFailed: "更新失敗，保留上次流量資料。",
+            .profileTrafficLeftGBFormat: "剩餘 %@ GB",
+            .profileTrafficLeftPercentFormat: "剩餘 %@",
+            .profileTrafficUnavailable: "暫無流量資訊",
+            .profileTrafficUpdatedFormat: "訂閱流量更新於 %@",
+            .importFromFile: "從檔案匯入",
+            .importFileHint: "選擇或拖入 YAML 檔案",
+            .importFromURL: "從網址匯入",
+            .importURLHint: "貼上 Mihomo YAML 設定的網址。",
+            .profileURL: "設定網址",
+            .downloadAndImport: "下載並匯入",
+            .importingProfile: "正在匯入…",
+            .invalidProfileURL: "請輸入有效的 http:// 或 https:// 網址。",
+            .profileDownloadHTTPErrorFormat: "下載失敗（HTTP %d）。",
+            .profileDownloadInvalidResponse: "伺服器未傳回有效的 HTTP 回應。",
+            .profileDownloadEmpty: "下載的設定為空。",
             .glassAppearance: "玻璃與模糊",
             .blurStrength: "模糊程度",
             .glassBlurHint: "數值越高，視窗背景和卡片的磨砂感越強。文字和按鈕保持清晰。",
@@ -569,6 +661,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "託管的 YAML 副本及其已儲存的路由規則將被刪除。",
         ],
         .japanese: [
+            .profileDownloadNotConfiguration: "サーバーから Clash/Mihomo の YAML 設定が返されませんでした。提供元から Clash/Mihomo 用の購読 URL をコピーしてください。",
+            .profileTrafficSnapshot: "YAML の記録",
+            .profileTrafficSnapshotHelpFormat: "%@ の YAML 記録。通信量を更新するには購読 URL から読み込んでください。",
+            .profileTrafficLocal: "ローカル YAML",
+            .profileTrafficLocalHelp: "この YAML に通信量情報はありません。購読 URL から読み込むと取得できます。",
+            .profileTrafficNotReported: "通信量の提供なし",
+            .profileTrafficNotReportedHelp: "購読サーバーから通信量情報が提供されていません。",
+            .profileTrafficRefreshFailed: "更新に失敗しました。前回の通信量を表示しています。",
+            .profileTrafficLeftGBFormat: "残り %@ GB",
+            .profileTrafficLeftPercentFormat: "残り %@",
+            .profileTrafficUnavailable: "通信量情報なし",
+            .profileTrafficUpdatedFormat: "通信量の更新日時: %@",
+            .importFromFile: "ファイルから読み込む",
+            .importFileHint: "YAML ファイルを選択またはドロップ",
+            .importFromURL: "URL から読み込む",
+            .importURLHint: "Mihomo YAML 設定へのリンクを貼り付けてください。",
+            .profileURL: "設定の URL",
+            .downloadAndImport: "ダウンロードして読み込む",
+            .importingProfile: "読み込み中…",
+            .invalidProfileURL: "有効な http:// または https:// URL を入力してください。",
+            .profileDownloadHTTPErrorFormat: "ダウンロードに失敗しました（HTTP %d）。",
+            .profileDownloadInvalidResponse: "サーバーから有効な HTTP 応答がありません。",
+            .profileDownloadEmpty: "ダウンロードした設定は空です。",
             .glassAppearance: "ガラスとぼかし",
             .blurStrength: "ぼかしの強さ",
             .glassBlurHint: "値を上げると背景とカードのすりガラス感が強くなります。文字とボタンは鮮明なままです。",
@@ -652,6 +767,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "管理対象の YAML コピーと保存済みルーティングルールが削除されます。",
         ],
         .french: [
+            .profileDownloadNotConfiguration: "Le serveur n’a pas renvoyé de configuration YAML Clash/Mihomo. Copiez le lien d’abonnement Clash/Mihomo depuis votre fournisseur.",
+            .profileTrafficSnapshot: "Instantané YAML",
+            .profileTrafficSnapshotHelpFormat: "Instantané YAML du %@. Importez une URL d’abonnement pour actualiser le quota.",
+            .profileTrafficLocal: "YAML local",
+            .profileTrafficLocalHelp: "Ce YAML ne contient pas de quota. Importez l’URL d’abonnement pour obtenir les données du fournisseur.",
+            .profileTrafficNotReported: "Quota non fourni",
+            .profileTrafficNotReportedHelp: "Le serveur d’abonnement ne fournit pas de quota.",
+            .profileTrafficRefreshFailed: "Échec de l’actualisation ; les dernières données sont conservées.",
+            .profileTrafficLeftGBFormat: "%@ GB restants",
+            .profileTrafficLeftPercentFormat: "%@ restants",
+            .profileTrafficUnavailable: "Trafic indisponible",
+            .profileTrafficUpdatedFormat: "Trafic mis à jour le %@",
+            .importFromFile: "Importer un fichier",
+            .importFileHint: "Choisir ou déposer un fichier YAML",
+            .importFromURL: "Importer depuis une URL",
+            .importURLHint: "Collez un lien vers une configuration YAML Mihomo.",
+            .profileURL: "URL de la configuration",
+            .downloadAndImport: "Télécharger et importer",
+            .importingProfile: "Importation…",
+            .invalidProfileURL: "Saisissez une URL http:// ou https:// valide.",
+            .profileDownloadHTTPErrorFormat: "Échec du téléchargement (HTTP %d).",
+            .profileDownloadInvalidResponse: "Le serveur n’a pas renvoyé de réponse HTTP valide.",
+            .profileDownloadEmpty: "La configuration téléchargée est vide.",
             .glassAppearance: "Verre et flou",
             .blurStrength: "Intensité du flou",
             .glassBlurHint: "Une valeur élevée renforce le verre dépoli du fond et des cartes. Le texte et les commandes restent nets.",
@@ -739,6 +877,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "La copie YAML gérée et ses règles de routage enregistrées seront supprimées.",
         ],
         .russian: [
+            .profileDownloadNotConfiguration: "Сервер не вернул конфигурацию YAML Clash/Mihomo. Скопируйте ссылку подписки в формате Clash/Mihomo у провайдера.",
+            .profileTrafficSnapshot: "Данные YAML",
+            .profileTrafficSnapshotHelpFormat: "Данные YAML от %@. Импортируйте URL подписки для обновления квоты.",
+            .profileTrafficLocal: "Локальный YAML",
+            .profileTrafficLocalHelp: "В этом YAML нет данных о квоте. Импортируйте URL подписки для получения данных провайдера.",
+            .profileTrafficNotReported: "Квота не указана",
+            .profileTrafficNotReportedHelp: "Сервер подписки не предоставил данные о квоте.",
+            .profileTrafficRefreshFailed: "Не удалось обновить; показаны последние сохранённые данные.",
+            .profileTrafficLeftGBFormat: "Осталось %@ GB",
+            .profileTrafficLeftPercentFormat: "Осталось %@",
+            .profileTrafficUnavailable: "Нет данных о трафике",
+            .profileTrafficUpdatedFormat: "Данные обновлены %@",
+            .importFromFile: "Импорт из файла",
+            .importFileHint: "Выберите или перетащите файл YAML",
+            .importFromURL: "Импорт по URL",
+            .importURLHint: "Вставьте ссылку на конфигурацию Mihomo YAML.",
+            .profileURL: "URL конфигурации",
+            .downloadAndImport: "Скачать и импортировать",
+            .importingProfile: "Импорт…",
+            .invalidProfileURL: "Введите корректный URL http:// или https://.",
+            .profileDownloadHTTPErrorFormat: "Не удалось скачать (HTTP %d).",
+            .profileDownloadInvalidResponse: "Сервер не вернул корректный ответ HTTP.",
+            .profileDownloadEmpty: "Скачанная конфигурация пуста.",
             .glassAppearance: "Стекло и размытие",
             .blurStrength: "Сила размытия",
             .glassBlurHint: "Чем выше значение, тем сильнее матовость фона и карточек. Текст и элементы управления остаются чёткими.",
@@ -826,6 +987,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "Управляемая копия YAML и сохранённые правила маршрутизации будут удалены.",
         ],
         .spanish: [
+            .profileDownloadNotConfiguration: "El servidor no ha devuelto una configuración YAML de Clash/Mihomo. Copie el enlace de suscripción de Clash/Mihomo de su proveedor.",
+            .profileTrafficSnapshot: "Datos del YAML",
+            .profileTrafficSnapshotHelpFormat: "Datos del YAML del %@. Importe una URL de suscripción para actualizar la cuota.",
+            .profileTrafficLocal: "YAML local",
+            .profileTrafficLocalHelp: "Este YAML no contiene la cuota. Importe la URL de suscripción para obtener datos del proveedor.",
+            .profileTrafficNotReported: "Cuota no indicada",
+            .profileTrafficNotReportedHelp: "El servidor de suscripción no ha proporcionado la cuota.",
+            .profileTrafficRefreshFailed: "Error al actualizar; se conservan los últimos datos.",
+            .profileTrafficLeftGBFormat: "%@ GB restantes",
+            .profileTrafficLeftPercentFormat: "%@ restante",
+            .profileTrafficUnavailable: "Tráfico no disponible",
+            .profileTrafficUpdatedFormat: "Tráfico actualizado %@",
+            .importFromFile: "Importar desde un archivo",
+            .importFileHint: "Selecciona o arrastra un archivo YAML",
+            .importFromURL: "Importar desde una URL",
+            .importURLHint: "Pega un enlace a una configuración YAML de Mihomo.",
+            .profileURL: "URL de la configuración",
+            .downloadAndImport: "Descargar e importar",
+            .importingProfile: "Importando…",
+            .invalidProfileURL: "Introduce una URL http:// o https:// válida.",
+            .profileDownloadHTTPErrorFormat: "Error al descargar (HTTP %d).",
+            .profileDownloadInvalidResponse: "El servidor no devolvió una respuesta HTTP válida.",
+            .profileDownloadEmpty: "La configuración descargada está vacía.",
             .glassAppearance: "Cristal y desenfoque",
             .blurStrength: "Intensidad del desenfoque",
             .glassBlurHint: "Los valores altos refuerzan el efecto esmerilado del fondo y las tarjetas. El texto y los controles siguen nítidos.",
@@ -913,6 +1097,29 @@ enum AppLocalization {
             .deleteProfileExplanation: "Se eliminarán la copia YAML gestionada y sus reglas de enrutamiento guardadas.",
         ],
         .portuguese: [
+            .profileDownloadNotConfiguration: "O servidor não devolveu uma configuração YAML Clash/Mihomo. Copie o link de subscrição Clash/Mihomo do seu fornecedor.",
+            .profileTrafficSnapshot: "Dados do YAML",
+            .profileTrafficSnapshotHelpFormat: "Dados do YAML de %@. Importe um URL de subscrição para atualizar a quota.",
+            .profileTrafficLocal: "YAML local",
+            .profileTrafficLocalHelp: "Este YAML não contém a quota. Importe o URL de subscrição para obter os dados do fornecedor.",
+            .profileTrafficNotReported: "Quota não fornecida",
+            .profileTrafficNotReportedHelp: "O servidor de subscrição não forneceu a quota.",
+            .profileTrafficRefreshFailed: "Falha na atualização; os últimos dados foram mantidos.",
+            .profileTrafficLeftGBFormat: "%@ GB restantes",
+            .profileTrafficLeftPercentFormat: "%@ restante",
+            .profileTrafficUnavailable: "Tráfego indisponível",
+            .profileTrafficUpdatedFormat: "Tráfego atualizado em %@",
+            .importFromFile: "Importar de um ficheiro",
+            .importFileHint: "Escolha ou arraste um ficheiro YAML",
+            .importFromURL: "Importar de um URL",
+            .importURLHint: "Cole um link para uma configuração YAML do Mihomo.",
+            .profileURL: "URL da configuração",
+            .downloadAndImport: "Descarregar e importar",
+            .importingProfile: "A importar…",
+            .invalidProfileURL: "Introduza um URL http:// ou https:// válido.",
+            .profileDownloadHTTPErrorFormat: "Falha ao descarregar (HTTP %d).",
+            .profileDownloadInvalidResponse: "O servidor não devolveu uma resposta HTTP válida.",
+            .profileDownloadEmpty: "A configuração descarregada está vazia.",
             .glassAppearance: "Vidro e desfoque",
             .blurStrength: "Intensidade do desfoque",
             .glassBlurHint: "Valores maiores reforçam o vidro fosco do fundo e dos cartões. O texto e os controlos continuam nítidos.",

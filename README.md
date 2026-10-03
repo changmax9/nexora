@@ -49,6 +49,10 @@ Build and launch the app:
 ./script/build_and_run.sh
 ```
 
+Normal launches and staged app bundles use an optimized release build. Use
+`./script/build_and_run.sh --debug` for a debug build in LLDB, or set
+`BUILD_CONFIGURATION=debug` explicitly when needed.
+
 The downloaded runtime files stay local and are excluded from Git.
 
 ## Test
@@ -63,7 +67,7 @@ Build the community DMG locally with an Apple signing identity. This keeps the
 app, Mihomo, and the TUN helper signed by the same team:
 
 ```bash
-CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 0.2.0 --community
+CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 0.2.1 --community
 ```
 
 Stage that exact DMG and a source archive in a draft GitHub Release at a tag

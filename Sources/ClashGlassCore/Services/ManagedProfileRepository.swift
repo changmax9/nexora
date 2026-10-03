@@ -5,12 +5,19 @@ public struct ManagedProfile: Identifiable, Codable, Equatable, Sendable {
     public var name: String
     public let managedConfigURL: URL
     public let importedAt: Date
+    public let subscriptionURL: URL?
+    public var trafficUsage: ProfileTrafficUsage?
 
-    public init(id: UUID, name: String, managedConfigURL: URL, importedAt: Date) {
+    public init(
+        id: UUID, name: String, managedConfigURL: URL, importedAt: Date,
+        subscriptionURL: URL? = nil, trafficUsage: ProfileTrafficUsage? = nil
+    ) {
         self.id = id
         self.name = name
         self.managedConfigURL = managedConfigURL
         self.importedAt = importedAt
+        self.subscriptionURL = subscriptionURL
+        self.trafficUsage = trafficUsage
     }
 }
 
@@ -66,8 +73,11 @@ public struct ManagedProfileRepository: Sendable {
     public func importProfile(
         from sourceURL: URL,
         name: String? = nil,
+        subscriptionURL: URL? = nil,
+        trafficUsage: ProfileTrafficUsage? = nil,
         validate: (URL) async -> ConfigValidationResult
     ) async throws -> ManagedProfile {
+        try Task.checkCancellation()
         let fileExtension = sourceURL.pathExtension.lowercased()
         guard fileExtension == "yaml" || fileExtension == "yml" else {
             throw ManagedProfileError.unsupportedFile
@@ -90,6 +100,12 @@ public struct ManagedProfileRepository: Sendable {
             case let .failure(message):
                 throw ManagedProfileError.validationFailed(message)
             }
+            try Task.checkCancellation()
+
+            var registry = try loadRegistry()
+            let importedAt = Date()
+            let usage = trafficUsage ?? (try? String(contentsOf: stagedURL, encoding: .utf8))
+                .flatMap { ProfileTrafficMetadata.usage(in: $0, updatedAt: importedAt) }
 
             try FileManager.default.createDirectory(at: profilesDirectory, withIntermediateDirectories: true)
             try FileManager.default.moveItem(at: stagingDirectory, to: destinationDirectory)
@@ -98,9 +114,10 @@ public struct ManagedProfileRepository: Sendable {
                 id: id,
                 name: name ?? sourceURL.deletingPathExtension().lastPathComponent,
                 managedConfigURL: destinationURL,
-                importedAt: Date()
+                importedAt: importedAt,
+                subscriptionURL: subscriptionURL,
+                trafficUsage: usage
             )
-            var registry = try loadRegistry()
             registry.profiles.append(profile)
             if registry.selectedProfileID == nil {
                 registry.selectedProfileID = profile.id
@@ -109,12 +126,20 @@ public struct ManagedProfileRepository: Sendable {
             return profile
         } catch {
             try? FileManager.default.removeItem(at: stagingDirectory)
+            try? FileManager.default.removeItem(at: destinationDirectory)
             throw error
         }
     }
 
     public func loadProfiles() throws -> [ManagedProfile] {
-        try loadRegistry().profiles
+        try loadRegistry().profiles.map { stored in
+            var profile = stored
+            if profile.trafficUsage == nil,
+               let yaml = try? String(contentsOf: profile.managedConfigURL, encoding: .utf8) {
+                profile.trafficUsage = ProfileTrafficMetadata.usage(in: yaml, updatedAt: profile.importedAt)
+            }
+            return profile
+        }
     }
 
     public func selectedProfileID() throws -> ManagedProfile.ID? {
@@ -127,6 +152,15 @@ public struct ManagedProfileRepository: Sendable {
             throw ManagedProfileError.profileNotFound
         }
         registry.selectedProfileID = id
+        try saveRegistry(registry)
+    }
+
+    public func updateTrafficUsage(_ usage: ProfileTrafficUsage, for id: ManagedProfile.ID) throws {
+        var registry = try loadRegistry()
+        guard let index = registry.profiles.firstIndex(where: { $0.id == id }) else {
+            throw ManagedProfileError.profileNotFound
+        }
+        registry.profiles[index].trafficUsage = usage
         try saveRegistry(registry)
     }
 
@@ -156,8 +190,8 @@ public struct ManagedProfileRepository: Sendable {
         if registry.selectedProfileID == id {
             registry.selectedProfileID = registry.profiles.first?.id
         }
-        try? FileManager.default.removeItem(at: profile.managedConfigURL.deletingLastPathComponent())
         try saveRegistry(registry)
+        try? FileManager.default.removeItem(at: profile.managedConfigURL.deletingLastPathComponent())
     }
 
     @discardableResult

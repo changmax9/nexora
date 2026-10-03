@@ -150,7 +150,7 @@ import Testing
     #expect(japanese.text(.selector) == "セレクター")
     #expect(simplified.localizedProxyType("Selector") == "选择器")
     #expect(traditional.localizedProxyType("Proxy") == "代理")
-    #expect(simplified.profileStorageDetail(name: "Mutdot") == "配置：Mutdot · 独立保存，不修改原 YAML")
+    #expect(simplified.profileStorageDetail(name: "SampleRoutes") == "配置：SampleRoutes · 独立保存，不修改原 YAML")
     #expect(traditional.ruleCount(1) == "1 條規則")
     #expect(traditional.ruleCount(2) == "2 條規則")
     #expect(simplified.text(.routingExplanation).contains("直连规则"))
@@ -198,14 +198,14 @@ import Testing
             isTunEnabled: false,
             activeSystemTunnel: true,
             egressKind: .systemTunnel,
-            externalIP: "151.242.36.41",
+            externalIP: "203.0.113.41",
             countryCode: "JP",
             countryName: "Japan",
-            intranetIP: "192.168.1.65",
+            intranetIP: "192.0.2.65",
             httpPort: 7890,
             socksPort: 7891,
             selectedMode: .rule,
-            selectedProfile: "Mutdot"
+            selectedProfile: "SampleRoutes"
         )
     )
 
@@ -213,7 +213,7 @@ import Testing
     #expect(report.summary.contains("System tunnel"))
     #expect(report.findings.contains { $0.title.contains("utun") })
     #expect(report.suggestedAction == "Turn off the other VPN/TUN, then refresh.")
-    #expect(report.copyText.contains("151.242.36.41"))
+    #expect(report.copyText.contains("203.0.113.41"))
     #expect(report.copyText.contains("System tunnel"))
 }
 
@@ -225,14 +225,14 @@ import Testing
             isTunEnabled: true,
             activeSystemTunnel: true,
             egressKind: .systemTunnel,
-            externalIP: "151.242.36.41",
+            externalIP: "203.0.113.41",
             countryCode: "JP",
             countryName: "Japan",
-            intranetIP: "192.168.1.65",
+            intranetIP: "192.0.2.65",
             httpPort: 7890,
             socksPort: 7891,
             selectedMode: .rule,
-            selectedProfile: "Mutdot"
+            selectedProfile: "SampleRoutes"
         )
     )
 
@@ -254,11 +254,11 @@ import Testing
             externalIP: "203.0.113.10",
             countryCode: "US",
             countryName: "United States",
-            intranetIP: "192.168.1.65",
+            intranetIP: "192.0.2.65",
             httpPort: 7890,
             socksPort: 7891,
             selectedMode: .rule,
-            selectedProfile: "Mutdot",
+            selectedProfile: "SampleRoutes",
             dnsChecks: [
                 NetworkDNSCheck(
                     host: "api4.ipify.org",
@@ -297,11 +297,11 @@ import Testing
             externalIP: "203.0.113.10",
             countryCode: "US",
             countryName: "United States",
-            intranetIP: "192.168.1.65",
+            intranetIP: "192.0.2.65",
             httpPort: 7890,
             socksPort: 7891,
             selectedMode: .rule,
-            selectedProfile: "Mutdot",
+            selectedProfile: "SampleRoutes",
             portChecks: [
                 NetworkPortCheck(
                     label: "HTTP Proxy",
@@ -313,7 +313,7 @@ import Testing
                 NetworkPortCheck(label: "Socks Proxy", port: 7891, isListening: false),
             ],
             dnsChecks: [
-                NetworkDNSCheck(host: "github.com", addresses: ["140.82.112.4"]),
+                NetworkDNSCheck(host: "github.com", addresses: ["192.0.2.4"]),
                 NetworkDNSCheck(host: "api4.ipify.org", addresses: [], errorMessage: "lookup failed"),
             ],
             endpointChecks: [
@@ -337,12 +337,12 @@ import Testing
         )
     )
 
-    #expect(report.copyText.contains("Route: profile=Mutdot, mode=Rule, egress=proxy"))
+    #expect(report.copyText.contains("Route: profile=SampleRoutes, mode=Rule, egress=proxy"))
     #expect(report.copyText.contains("Ports:"))
     #expect(report.copyText.contains("- HTTP Proxy :7890 listening ClashGlass pid 42"))
     #expect(report.copyText.contains("- Socks Proxy :7891 not listening"))
     #expect(report.copyText.contains("DNS:"))
-    #expect(report.copyText.contains("- github.com 140.82.112.4"))
+    #expect(report.copyText.contains("- github.com 192.0.2.4"))
     #expect(report.copyText.contains("- api4.ipify.org failed lookup failed"))
     #expect(report.copyText.contains("Endpoints:"))
     #expect(report.copyText.contains("- ipwho.is HTTP 200 124 ms"))
@@ -360,11 +360,11 @@ import Testing
             externalIP: "203.0.113.10",
             countryCode: "US",
             countryName: "United States",
-            intranetIP: "192.168.1.65",
+            intranetIP: "192.0.2.65",
             httpPort: 7890,
             socksPort: 7891,
             selectedMode: .rule,
-            selectedProfile: "Mutdot",
+            selectedProfile: "SampleRoutes",
             dnsChecks: [
                 NetworkDNSCheck(
                     host: "api4.ipify.org",
@@ -379,13 +379,13 @@ import Testing
         report: report,
         totalChecks: 8,
         egressTitle: "Proxy Egress",
-        profileTitle: "Mutdot"
+        profileTitle: "SampleRoutes"
     )
 
     #expect(brief.headline == "Blocking layer detected")
     #expect(brief.detail.contains("DNS resolution"))
     #expect(brief.detail.contains("8 checks"))
-    #expect(brief.metrics.map(\.value) == ["8", "Proxy Egress", "Mutdot"])
+    #expect(brief.metrics.map(\.value) == ["8", "Proxy Egress", "SampleRoutes"])
 }
 
 @Test func networkDiagnosticBriefLocalizesToolbarAndProtectsLongExitNames() {
@@ -393,7 +393,7 @@ import Testing
         report: .placeholder,
         totalChecks: 0,
         egressTitle: AppLanguage.russian.text(.systemTunnelEgress),
-        profileTitle: "Mutdot",
+        profileTitle: "SampleRoutes",
         language: .russian
     )
 
@@ -421,11 +421,11 @@ import Testing
             externalIP: "203.0.113.8",
             countryCode: "US",
             countryName: "United States",
-            intranetIP: "192.168.1.65",
+            intranetIP: "192.0.2.65",
             httpPort: 7890,
             socksPort: 7891,
             selectedMode: .rule,
-            selectedProfile: "Mutdot"
+            selectedProfile: "SampleRoutes"
         )
     )
 

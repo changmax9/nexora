@@ -146,7 +146,7 @@ public struct MihomoAPIService: Sendable {
     }
 
     public func lineDataStream(for endpoint: MihomoAPIEndpoint) -> AsyncThrowingStream<Data, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream(bufferingPolicy: endpoint == .traffic ? .bufferingNewest(1) : .unbounded) { continuation in
             let streamTask = Task {
                 do {
                     let request = try requestBuilder.urlRequest(for: endpoint)

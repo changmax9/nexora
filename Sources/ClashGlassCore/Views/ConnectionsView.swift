@@ -6,6 +6,7 @@ struct ConnectionsView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let visibleConnections = filteredConnections
         FeaturePage(
             searchText: $query,
             placeholder: "\(store.text(.search)) \(store.text(.connections))",
@@ -28,23 +29,23 @@ struct ConnectionsView: View {
                         text: "\(store.connections.count) \(store.text(.connections))",
                         symbol: "network"
                     )
-                    if filteredConnections.count != store.connections.count {
+                    if visibleConnections.count != store.connections.count {
                         StatusChip(
-                            text: "\(filteredConnections.count) \(store.text(.search))",
+                            text: "\(visibleConnections.count) \(store.text(.search))",
                             symbol: "line.3.horizontal.decrease.circle"
                         )
                     }
                     Spacer()
                 }
 
-                if filteredConnections.isEmpty {
+                if visibleConnections.isEmpty {
                     EmptyGlassState(title: store.text(.noConnections), symbol: "network.slash")
                 } else {
                     GlassCard(radius: 16, padding: 0) {
-                        VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
                             ConnectionHeader(language: store.language)
                             Divider().opacity(0.16)
-                            ForEach(filteredConnections) { connection in
+                            ForEach(visibleConnections) { connection in
                                 ConnectionRow(
                                     connection: connection,
                                     showsBlock: true,
@@ -54,7 +55,7 @@ struct ConnectionsView: View {
                                         await store.closeConnection(connection)
                                     }
                                 }
-                                if connection.id != filteredConnections.last?.id {
+                                if connection.id != visibleConnections.last?.id {
                                     Divider().padding(.leading, 16).opacity(0.12)
                                 }
                             }

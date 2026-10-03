@@ -9,11 +9,11 @@ import Testing
     let profileB = UUID()
     let repository = ProxySelectionRepository(rootURL: rootURL)
 
-    try repository.save(selector: "Mutdot", node: "日本JP04", profileID: profileA)
-    try repository.save(selector: "Mutdot", node: "香港HK04", profileID: profileB)
+    try repository.save(selector: "SampleRoutes", node: "日本JP04", profileID: profileA)
+    try repository.save(selector: "SampleRoutes", node: "香港HK04", profileID: profileB)
 
-    #expect(try repository.selections(profileID: profileA) == ["Mutdot": "日本JP04"])
-    #expect(try repository.selections(profileID: profileB) == ["Mutdot": "香港HK04"])
+    #expect(try repository.selections(profileID: profileA) == ["SampleRoutes": "日本JP04"])
+    #expect(try repository.selections(profileID: profileB) == ["SampleRoutes": "香港HK04"])
 }
 
 @Test func runtimeConfigurationPreparerChoosesFreePorts() throws {
@@ -206,7 +206,7 @@ import Testing
             systemTunnelDetector: { false }
         )
     )
-    store.externalIP = "151.242.36.41"
+    store.externalIP = "203.0.113.41"
     store.networkCountryCode = "JP"
     store.networkCountryName = "Japan"
 
@@ -258,7 +258,7 @@ import Testing
     defer { try? FileManager.default.removeItem(at: directory) }
     try """
     #!/bin/sh
-    printf '%s' '{"success":true,"ip":"151.242.36.41","country_code":"JP","country":"Japan"}'
+    printf '%s' '{"success":true,"ip":"203.0.113.41","country_code":"JP","country":"Japan"}'
     """.write(to: executableURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
 
@@ -283,7 +283,7 @@ import Testing
             targets.map { target in
                 NetworkDNSCheck(
                     host: target.host,
-                    addresses: target.host == "github.com" ? ["140.82.112.4"] : ["104.21.1.1"]
+                    addresses: target.host == "github.com" ? ["192.0.2.4"] : ["198.51.100.1"]
                 )
             }
         },
@@ -303,11 +303,11 @@ import Testing
 
     await store.runNetworkDiagnosis()
 
-    #expect(store.externalIP == "151.242.36.41")
+    #expect(store.externalIP == "203.0.113.41")
     #expect(store.networkEgressKind == .systemTunnel)
     #expect(store.networkDiagnosticReport.severity == .warning)
     #expect(store.networkDiagnosticReport.summary.contains("System tunnel"))
-    #expect(store.networkDiagnosticReport.copyText.contains("151.242.36.41"))
+    #expect(store.networkDiagnosticReport.copyText.contains("203.0.113.41"))
     #expect(store.networkPortChecks.count == 3)
     #expect(store.networkDNSChecks.count == 3)
     #expect(store.networkEndpointChecks.count == 2)
@@ -429,7 +429,7 @@ import Testing
     mixed-port: 7890
     external-controller: 127.0.0.1:9090
     proxy-groups:
-      - name: Mutdot
+      - name: SampleRoutes
         type: select
         proxies:
           - DIRECT
@@ -460,10 +460,10 @@ import Testing
     #expect(!source.contains("Nexora routing overrides"))
     #expect(runtime.contains("# Nexora routing overrides"))
     #expect(runtime.contains("    # Nexora routing overrides"))
-    #expect(runtime.contains("'DOMAIN-SUFFIX,openai.com,Mutdot'"))
+    #expect(runtime.contains("'DOMAIN-SUFFIX,openai.com,SampleRoutes'"))
     #expect(runtime.contains("'DOMAIN-SUFFIX,example.cn,DIRECT'"))
     #expect(
-        runtime.range(of: "DOMAIN-SUFFIX,openai.com,Mutdot")!.lowerBound
+        runtime.range(of: "DOMAIN-SUFFIX,openai.com,SampleRoutes")!.lowerBound
             < runtime.range(of: "MATCH,DIRECT")!.lowerBound
     )
 }
@@ -502,11 +502,11 @@ import Testing
 @Test func routingVPNTargetResolverReadsInlineSelectorGroup() {
     let yaml = """
     proxy-groups:
-      - { name: Mutdot, type: select, proxies: [DIRECT] }
+      - { name: SampleRoutes, type: select, proxies: [DIRECT] }
       - { name: Auto, type: url-test, proxies: [DIRECT] }
     rules:
-      - MATCH,Mutdot
+      - MATCH,SampleRoutes
     """
 
-    #expect(RoutingVPNTargetResolver.target(from: yaml) == "Mutdot")
+    #expect(RoutingVPNTargetResolver.target(from: yaml) == "SampleRoutes")
 }

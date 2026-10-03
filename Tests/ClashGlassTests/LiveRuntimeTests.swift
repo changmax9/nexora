@@ -45,7 +45,7 @@ import Testing
     }
 
     #expect(validation == .success)
-    #expect(yaml.contains("'DOMAIN-SUFFIX,openai.com,Mutdot'"))
+    #expect(yaml.contains("'DOMAIN-SUFFIX,openai.com,SampleRoutes'"))
     #expect(yaml.contains("'DOMAIN-SUFFIX,example.cn,DIRECT'"))
 }
 
@@ -112,14 +112,14 @@ import Testing
         }
         let proxies = object?["proxies"] as? [String: Any]
         let globalRemote = proxies?["GLOBAL"] as? [String: Any]
-        let mutdotRemote = proxies?["Mutdot"] as? [String: Any]
+        let selectorRemote = proxies?["SampleRoutes"] as? [String: Any]
         print(
             "LIVE_GLOBAL_SELECTION target=\(singapore.name) "
                 + "global=\(globalRemote?["now"] as? String ?? "--") "
-                + "mutdot=\(mutdotRemote?["now"] as? String ?? "--")"
+                + "selector=\(selectorRemote?["now"] as? String ?? "--")"
         )
         #expect(globalRemote?["now"] as? String == singapore.name)
-        #expect(mutdotRemote?["now"] as? String == singapore.name)
+        #expect(selectorRemote?["now"] as? String == singapore.name)
         let singaporeIdentity = try? await NetworkIdentityService()
             .fetchViaProxy(host: store.proxyHost, port: store.httpPort)
         print(
@@ -147,10 +147,10 @@ import Testing
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         }
         let proxies = object?["proxies"] as? [String: Any]
-        let parent = proxies?["Mutdot"] as? [String: Any]
+        let parent = proxies?["SampleRoutes"] as? [String: Any]
         print(
             "LIVE_SELECTION group=\(automatic.name) resolved=\(resolvedGroup ?? "--") target=\(target.name) "
-                + "localParent=\(store.proxyGroups.first(where: { $0.name == "Mutdot" })?.nodes.first(where: { $0.isSelected })?.name ?? "--") "
+                + "localParent=\(store.proxyGroups.first(where: { $0.name == "SampleRoutes" })?.nodes.first(where: { $0.isSelected })?.name ?? "--") "
                 + "remoteParent=\(parent?["now"] as? String ?? "--") "
                 + "error=\(store.lastErrorMessage ?? "none")"
         )
@@ -198,7 +198,7 @@ import Testing
         #expect(versionText.contains("version"))
 
         await store.refreshProxies()
-        if let group = store.proxyGroups.first(where: { $0.name == "Mutdot" }),
+        if let group = store.proxyGroups.first(where: { $0.name == "SampleRoutes" }),
            let target = group.nodes.first(where: { !$0.isSelected && $0.region == "HK" }) {
             persistedTarget = target.name
             await store.selectProxyRemote(groupName: group.name, nodeName: target.name)
@@ -208,7 +208,7 @@ import Testing
                 .isSelected
             #expect(selected == true)
         } else {
-            Issue.record("The live Mutdot proxy group did not expose an unselected Hong Kong node.")
+            Issue.record("The live SampleRoutes proxy group did not expose an unselected Hong Kong node.")
         }
 
         let identity = try? await NetworkIdentityService()
@@ -242,7 +242,7 @@ import Testing
     #expect(store.coreStatus == .stopped)
     await store.refreshProxies()
     let restoredSelection = store.proxyGroups
-        .first(where: { $0.name == "Mutdot" })?
+        .first(where: { $0.name == "SampleRoutes" })?
         .nodes.first(where: { $0.isSelected })?
         .name
     #expect(restoredSelection == persistedTarget)

@@ -23,7 +23,7 @@ let package = Package(
         .executableTarget(name: "NexoraTUNHelper", dependencies: ["NexoraTUNSupport"]),
         .target(
             name: "ClashGlassCore",
-            dependencies: ["NexoraTUNSupport"],
+            dependencies: ["NexoraTUNSupport", .product(name: "Yams", package: "Yams")],
             path: "Sources/ClashGlassCore"
         ),
         .executableTarget(

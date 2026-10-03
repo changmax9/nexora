@@ -32,6 +32,7 @@ struct FeaturePage<Content: View>: View {
     var toolbarLeading: AnyView? = nil
     let placeholder: String
     let actions: [FeatureAction]
+    var toolbarTrailing: AnyView? = nil
     @ViewBuilder let content: Content
     @Environment(\.colorScheme) private var colorScheme
 
@@ -39,6 +40,7 @@ struct FeaturePage<Content: View>: View {
         VStack(alignment: .leading, spacing: 14) {
             featureToolbar
             .frame(maxWidth: .infinity)
+            .frame(minHeight: CGFloat(ToolbarControlMetrics.hitTarget))
             .padding(.top, 6)
             .padding(.horizontal, PageSurfaceMetrics.horizontalInset)
 
@@ -133,6 +135,9 @@ struct FeaturePage<Content: View>: View {
                 )
                 .disabled(action.isDisabled)
                 .opacity(action.isDisabled ? 0.55 : 1)
+            }
+            if let toolbarTrailing {
+                toolbarTrailing
             }
         }
     }

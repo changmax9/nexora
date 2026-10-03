@@ -32,6 +32,7 @@ public struct NetworkDiagnosticSnapshot: Equatable, Sendable {
     public let portChecks: [NetworkPortCheck]
     public let dnsChecks: [NetworkDNSCheck]
     public let endpointChecks: [NetworkEndpointCheck]
+    public let coreProcessID: Int?
 
     public init(
         isStarted: Bool,
@@ -49,7 +50,8 @@ public struct NetworkDiagnosticSnapshot: Equatable, Sendable {
         selectedProfile: String,
         portChecks: [NetworkPortCheck] = [],
         dnsChecks: [NetworkDNSCheck] = [],
-        endpointChecks: [NetworkEndpointCheck] = []
+        endpointChecks: [NetworkEndpointCheck] = [],
+        coreProcessID: Int? = nil
     ) {
         self.isStarted = isStarted
         self.isSystemProxyEnabled = isSystemProxyEnabled
@@ -67,6 +69,7 @@ public struct NetworkDiagnosticSnapshot: Equatable, Sendable {
         self.portChecks = portChecks
         self.dnsChecks = dnsChecks
         self.endpointChecks = endpointChecks
+        self.coreProcessID = coreProcessID
     }
 }
 
@@ -601,7 +604,9 @@ public enum NetworkDiagnosticEngine {
         } else {
             findings.append(NetworkDiagnosticFinding(
                 title: "Nexora runtime",
-                detail: "Mihomo is not started as the active VPN runtime.",
+                detail: snapshot.coreProcessID == nil
+                    ? "Mihomo is not started as the active VPN runtime."
+                    : "Mihomo is running in controller-only mode. The system VPN is off.",
                 severity: snapshot.activeSystemTunnel ? .warning : .healthy,
                 symbol: "power.circle"
             ))
@@ -622,13 +627,17 @@ public enum NetworkDiagnosticEngine {
 
         for check in snapshot.portChecks {
             if check.isListening {
+                let isOwned = snapshot.coreProcessID.map { $0 == check.ownerPID }
+                // Privileged runtimes do not expose a PID; retain the active-runtime
+                // fallback there, while checking known ordinary-core ownership exactly.
+                let isExpected = isOwned ?? snapshot.isStarted
                 findings.append(NetworkDiagnosticFinding(
                     title: "\(check.label) :\(check.port)",
                     detail: check.ownerDescription,
-                    severity: snapshot.isStarted ? .healthy : .warning,
+                    severity: isExpected ? .healthy : snapshot.isStarted ? .critical : .warning,
                     symbol: "dot.radiowaves.left.and.right"
                 ))
-            } else if snapshot.isStarted {
+            } else if snapshot.isStarted || snapshot.coreProcessID != nil {
                 findings.append(NetworkDiagnosticFinding(
                     title: "\(check.label) :\(check.port)",
                     detail: "No process is listening even though the runtime is active.",
@@ -708,6 +717,11 @@ public enum NetworkDiagnosticEngine {
         } else if snapshot.isStarted {
             summary = "Nexora is running, but \(snapshot.egressKind.diagnosticFallbackLabel) is visible."
             action = "Check the route and probes, then refresh."
+        } else if snapshot.portChecks.contains(where: {
+            $0.isListening && (snapshot.coreProcessID == nil || $0.ownerPID != snapshot.coreProcessID)
+        }) {
+            summary = "Another process is using a configured Nexora port."
+            action = "Check the owning process in Port Radar before starting Nexora."
         } else {
             summary = "Direct egress is visible."
             action = "No Nexora route conflict found."
@@ -733,6 +747,7 @@ public enum NetworkDiagnosticEngine {
             "external=\(snapshot.externalIP)\(country.isEmpty ? "" : " \(country)")",
             "local=\(snapshot.intranetIP)",
             "started=\(snapshot.isStarted)",
+            "corePID=\(snapshot.coreProcessID.map(String.init) ?? "unknown")",
             "systemProxy=\(snapshot.isSystemProxyEnabled)",
             "tun=\(snapshot.isTunEnabled)",
         ].joined(separator: ", ")

@@ -24,6 +24,12 @@ struct ProxiesView: View {
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
+                    if let profile = store.selectedManagedProfile {
+                        Label(profile.name, systemImage: "doc.text")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     HStack {
                         PillSegment(
                             values: ProxiesDisplayMode.allCases,
@@ -40,7 +46,7 @@ struct ProxiesView: View {
                             )
                         } else {
                             StatusChip(
-                                text: "\(filteredGroups.reduce(0) { $0 + $1.nodes.count }) \(store.text(.nodes))",
+                                text: "\(Set(filteredGroups.flatMap(\.nodes).filter { !$0.isGroup }.map(\.name)).count) \(store.text(.nodes))",
                                 symbol: "point.3.connected.trianglepath.dotted"
                             )
                         }
@@ -61,6 +67,15 @@ struct ProxiesView: View {
                 }
             }
         }
+        .task(id: store.selectedManagedProfileID) {
+            guard store.selectedManagedProfileID != nil else { return }
+            await store.refreshProxies()
+        }
+        .onChange(of: store.selectedManagedProfileID) {
+            query = ""
+            nodeFilter = .all
+            expansionState = ProxyGroupExpansionState()
+        }
     }
 
     private var toolbarActions: [FeatureAction] {
@@ -80,7 +95,7 @@ struct ProxiesView: View {
 
     private var filteredGroups: [ProxyGroup] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return store.proxyGroups.compactMap { group in
+        return store.selectedProfileProxyGroups.compactMap { group in
             let groupMatchesQuery = trimmed.isEmpty
                 || group.name.localizedCaseInsensitiveContains(trimmed)
             let nodes = group.nodes.filter {
