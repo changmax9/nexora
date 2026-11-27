@@ -231,7 +231,6 @@ import Testing
         ["-setwebproxystate", "Wi-Fi", "on"],
         ["-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "7890"],
         ["-setsecurewebproxystate", "Wi-Fi", "on"],
-        ["-setsocksfirewallproxy", "Wi-Fi", "127.0.0.1", "7890"],
         ["-setsocksfirewallproxystate", "Wi-Fi", "off"],
     ])
 }

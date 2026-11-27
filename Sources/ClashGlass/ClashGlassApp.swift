@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
                 store: store,
                 systemAppearanceMonitor: systemAppearanceMonitor
             )
+            store.recoverSystemProxyAfterRelaunch()
             _ = updaterController
         }
     }
@@ -75,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         configureWindowsWhenReady()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        store?.shutdownForApplicationTermination() == false ? .terminateCancel : .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {

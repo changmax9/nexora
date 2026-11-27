@@ -17,6 +17,9 @@ public final class AppStore {
     private let networkEndpointProbe: @Sendable ([NetworkEndpointTarget]) async -> [NetworkEndpointCheck]
     private let proxySelectionRepository: ProxySelectionRepository
     private let routingOverrideRepository: RoutingOverrideRepository
+    private let systemProxyRecoveryRepository: SystemProxyRecoveryRepository
+    private var previousSystemProxyService: String?
+    private var managedSystemProxySnapshot: SystemProxySnapshot?
     private var previousSystemProxySnapshot: SystemProxySnapshot?
     private var runtimeTickCount = 0
     private var trafficStreamTask: Task<Void, Never>?
@@ -123,7 +126,31 @@ public final class AppStore {
     public var uploadTrafficUnit = "B"
     public var downloadTrafficUnit = "B"
     private(set) var trafficUsageTotals = TrafficUsageTotals.zero
-    public var lastErrorMessage: String?
+    // Proxy cleanup failures must survive successful traffic/config responses.
+    public private(set) var systemProxyErrorMessage: String? {
+        didSet {
+            if systemProxyErrorMessage != oldValue {
+                acknowledgedSystemProxyError = nil
+            }
+        }
+    }
+    private var acknowledgedSystemProxyError: String?
+    private var transientErrorMessage: String?
+    public var lastErrorMessage: String? {
+        get { systemProxyErrorMessage ?? transientErrorMessage }
+        set { transientErrorMessage = newValue }
+    }
+    public var errorAlertMessage: String? {
+        if let systemProxyErrorMessage, systemProxyErrorMessage != acknowledgedSystemProxyError {
+            return systemProxyErrorMessage
+        }
+        return transientErrorMessage
+    }
+
+    public func dismissErrorAlert() {
+        acknowledgedSystemProxyError = systemProxyErrorMessage
+        transientErrorMessage = nil
+    }
     public private(set) var profileValidationStates: [ManagedProfile.ID: ProfileValidationState] = [:]
     var isLatencyTesting = false
     var latencyTestProgress = LatencyTestProgress(completed: 0, total: 0)
@@ -158,6 +185,7 @@ public final class AppStore {
         self.coreService = coreService
         self.apiService = apiService
         self.systemProxyService = systemProxyService
+        systemProxyRecoveryRepository = SystemProxyRecoveryRepository(rootURL: profileRepository.rootURL)
         self.profileRepository = profileRepository
         self.runtimeConfigurationPreparer = runtimeConfigurationPreparer
         self.networkIdentityService = networkIdentityService
@@ -351,9 +379,9 @@ public final class AppStore {
                 if let replacement = managedProfiles.first(where: { $0.id != id }) {
                     guard await activateManagedProfile(replacement) else { return }
                 } else if isStarted {
-                    await stopRuntime(userInitiated: true)
+                    guard await stopRuntime(userInitiated: true) else { return }
                 } else {
-                    await stopControllerOnly(userInitiated: true)
+                    guard await stopControllerOnly(userInitiated: true) else { return }
                 }
             }
             try profileRepository.remove(id)
@@ -516,6 +544,12 @@ public final class AppStore {
             return false
         }
         await applySystemProxy(enabled: true, service: networkService)
+        guard isSystemProxyEnabled, systemProxyErrorMessage == nil else {
+            let failure = lastErrorMessage ?? "Could not apply system proxy settings."
+            await stopRuntime(userInitiated: false)
+            lastErrorMessage = failure
+            return false
+        }
         await refreshNetworkIdentity()
         return isStarted && lastErrorMessage == nil
     }
@@ -550,7 +584,7 @@ public final class AppStore {
             }
             await fetchProxies()
         case .restartController:
-            await stopControllerOnly(userInitiated: true)
+            guard await stopControllerOnly(userInitiated: true) else { return }
             guard await ensureControllerAvailable(configPath: configPath) else {
                 return
             }
@@ -560,29 +594,34 @@ public final class AppStore {
             await fetchProxies()
         case .restartActiveRuntime:
             stagedOutboundMode = activeMode
-            await stopRuntime(userInitiated: true)
+            guard await stopRuntime(userInitiated: true) else { return }
             _ = await startRuntime(configPath: configPath)
         }
     }
 
-    public func shutdownForApplicationTermination() {
+    @discardableResult
+    public func shutdownForApplicationTermination() -> Bool {
+        guard restorePreviousSystemProxy() else { return false }
         stopTrafficStream()
-        if let previousSystemProxySnapshot {
-            try? systemProxyService.apply(
-                .restore(service: networkService, snapshot: previousSystemProxySnapshot)
-            )
-            self.previousSystemProxySnapshot = nil
-        }
         coreService.stopImmediately()
         coreStatus = coreService.status
         isStarted = false
         isCoreRunning = false
-        isSystemProxyEnabled = false
+        return true
+    }
+
+    public func recoverSystemProxyAfterRelaunch() {
+        guard !isStarted, !coreService.isProcessRunning else { return }
+        restorePreviousSystemProxy()
     }
 
     public func toggleSystemProxy(service: String = "Wi-Fi") async {
         guard !isRuntimeTransitioning else { return }
         guard isStarted else {
+            if previousSystemProxySnapshot != nil {
+                restorePreviousSystemProxy()
+                return
+            }
             isSystemProxyEnabled.toggle()
             return
         }
@@ -646,7 +685,7 @@ public final class AppStore {
                 do { try coreService.authorizeTUN() }
                 catch { lastErrorMessage = error.localizedDescription; return }
             }
-            await stopRuntime(userInitiated: true)
+            guard await stopRuntime(userInitiated: true) else { return }
             stagedTunEnabled = enabled
             isTunEnabled = enabled
             if !(await startRuntime(configPath: configPath)) {
@@ -1061,23 +1100,43 @@ public final class AppStore {
     }
 
     public func applySystemProxy(enabled: Bool, service: String = "Wi-Fi") async {
+        let wasEnabled = isSystemProxyEnabled
         do {
+            try loadSystemProxyRecoveryIfNeeded()
+            if enabled, let previousSystemProxyService, previousSystemProxyService != service {
+                guard restorePreviousSystemProxy() else { return }
+            }
             if enabled, previousSystemProxySnapshot == nil {
-                previousSystemProxySnapshot = try? systemProxyService.capture(service: service)
+                let snapshot = try systemProxyService.capture(service: service)
+                    .removingProxy(host: proxyHost, httpPort: httpPort, socksPort: socksPort)
+                let managed = SystemProxySnapshot.enabled(host: proxyHost, httpPort: httpPort, socksPort: socksPort)
+                try systemProxyRecoveryRepository.save(.ownedByCurrentProcess(service: service, snapshot: snapshot, managedProxy: managed))
+                previousSystemProxySnapshot = snapshot
+                previousSystemProxyService = service
+                managedSystemProxySnapshot = managed
+            } else if enabled, let snapshot = previousSystemProxySnapshot {
+                let managed = SystemProxySnapshot.enabled(host: proxyHost, httpPort: httpPort, socksPort: socksPort)
+                try systemProxyRecoveryRepository.save(.ownedByCurrentProcess(service: service, snapshot: snapshot, managedProxy: managed))
+                managedSystemProxySnapshot = managed
             }
             if !enabled {
                 restorePreviousSystemProxy()
                 return
             }
-            let command = enabled
-                ? SystemProxyCommand.enable(service: service, host: proxyHost, httpPort: httpPort, socksPort: socksPort)
-                : SystemProxyCommand.disable(service: service)
+            let command = SystemProxyCommand.enable(
+                service: service, host: proxyHost, httpPort: httpPort, socksPort: socksPort
+            )
             try systemProxyService.apply(command)
             isSystemProxyEnabled = enabled
+            systemProxyErrorMessage = nil
             lastErrorMessage = nil
         } catch {
-            lastErrorMessage = error.localizedDescription
-            isSystemProxyEnabled = !enabled
+            if enabled, previousSystemProxySnapshot != nil {
+                restorePreviousSystemProxy()
+            } else {
+                isSystemProxyEnabled = wasEnabled
+            }
+            systemProxyErrorMessage = error.localizedDescription
         }
     }
 
@@ -1282,9 +1341,9 @@ public final class AppStore {
             // Check the source before taking down a working connection.
             _ = try MihomoConfigurationInspector.inspect(url: profile.managedConfigURL)
             if wasStarted {
-                await stopRuntime(userInitiated: true)
+                guard await stopRuntime(userInitiated: true) else { return false }
             } else if wasCoreRunning {
-                await stopControllerOnly(userInitiated: true)
+                guard await stopControllerOnly(userInitiated: true) else { return false }
             }
             try profileRepository.select(profile.id)
             reloadManagedProfiles()
@@ -1465,6 +1524,15 @@ public final class AppStore {
 
     @discardableResult
     private func ensureControllerAvailable(configPath: String) async -> Bool {
+        do {
+            try loadSystemProxyRecoveryIfNeeded()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            return false
+        }
+        if !coreService.isProcessRunning, previousSystemProxySnapshot != nil {
+            guard restorePreviousSystemProxy() else { return false }
+        }
         let wantsPrivilegedTUN = (stagedTunEnabled ?? isTunEnabled) && coreService.supportsPrivilegedTUN
         if wantsPrivilegedTUN, !coreService.isPrivilegedRunning {
             do { try coreService.authorizeTUN() }
@@ -1480,6 +1548,7 @@ public final class AppStore {
         }
 
         if coreService.isProcessRunning {
+            guard restorePreviousSystemProxy() else { return false }
             await coreService.stop(userInitiated: false)
         }
 
@@ -1523,6 +1592,7 @@ public final class AppStore {
                     .last
                     .map(String.init)
                 ?? "Mihomo controller did not become ready at \(controllerURL.absoluteString)."
+            guard restorePreviousSystemProxy() else { return false }
             await coreService.stop(userInitiated: false)
             coreStatus = .failed(failure)
             isStarted = false
@@ -1553,14 +1623,14 @@ public final class AppStore {
         }
         if wasStarted {
             stagedOutboundMode = activeMode
-            await stopRuntime(userInitiated: true)
+            guard await stopRuntime(userInitiated: true) else { throw RoutingRuntimeError.restartFailed(lastErrorMessage ?? "Could not restore the system proxy.") }
             if !(await startRuntime(configPath: configPath)) {
                 throw RoutingRuntimeError.restartFailed(
                     lastErrorMessage ?? "Mihomo did not restart with the new routing rules."
                 )
             }
         } else {
-            await stopControllerOnly(userInitiated: true)
+            guard await stopControllerOnly(userInitiated: true) else { throw RoutingRuntimeError.restartFailed(lastErrorMessage ?? "Could not restore the system proxy.") }
             guard await ensureControllerAvailable(configPath: configPath) else {
                 throw RoutingRuntimeError.restartFailed(
                     lastErrorMessage ?? "Mihomo controller did not restart with the new routing rules."
@@ -1586,17 +1656,17 @@ public final class AppStore {
         }
     }
 
-    private func stopRuntime(userInitiated: Bool) async {
+    @discardableResult
+    private func stopRuntime(userInitiated: Bool) async -> Bool {
+        guard restorePreviousSystemProxy() else { return false }
         runtimeGeneration += 1
         stagedOutboundMode = stagedOutboundMode ?? confirmedOutboundMode
         stagedTunEnabled = isTunEnabled
         stopTrafficStream()
-        restorePreviousSystemProxy()
         await coreService.stop(userInitiated: userInitiated)
         coreStatus = coreService.status
         isStarted = false
         isCoreRunning = false
-        isSystemProxyEnabled = false
         runtimeTickCount = 0
         latestUploadBytesPerSecond = 0
         latestDownloadBytesPerSecond = 0
@@ -1604,9 +1674,12 @@ public final class AppStore {
         downloadSpeedText = "0B/s"
         speedSamples = Array(repeating: 0, count: 28)
         await refreshNetworkIdentity()
+        return true
     }
 
-    private func stopControllerOnly(userInitiated: Bool) async {
+    @discardableResult
+    private func stopControllerOnly(userInitiated: Bool) async -> Bool {
+        guard restorePreviousSystemProxy() else { return false }
         runtimeGeneration += 1
         stopTrafficStream()
         await coreService.stop(userInitiated: userInitiated)
@@ -1614,22 +1687,67 @@ public final class AppStore {
         isStarted = false
         isCoreRunning = false
         runtimeTickCount = 0
+        return true
     }
 
-    private func restorePreviousSystemProxy() {
+    @discardableResult
+    private func restorePreviousSystemProxy() -> Bool {
+        do {
+            try loadSystemProxyRecoveryIfNeeded()
+        } catch SystemProxyError.ownedByAnotherInstance where !coreService.isProcessRunning {
+            // Closing a second, idle app must not disconnect the first app.
+            return true
+        } catch {
+            systemProxyErrorMessage = error.localizedDescription
+            return false
+        }
         guard let previousSystemProxySnapshot else {
             isSystemProxyEnabled = false
-            return
+            return true
         }
         do {
-            try systemProxyService.apply(
-                .restore(service: networkService, snapshot: previousSystemProxySnapshot)
+            let managed = managedSystemProxySnapshot ?? legacyManagedSystemProxySnapshot()
+            try systemProxyService.restore(
+                service: previousSystemProxyService ?? networkService,
+                snapshot: previousSystemProxySnapshot.removingProxy(
+                    host: managed.web.host, httpPort: managed.web.port, socksPort: managed.socks.port
+                ),
+                ownedSnapshot: managed
             )
+            try systemProxyRecoveryRepository.clear()
             self.previousSystemProxySnapshot = nil
+            previousSystemProxyService = nil
+            managedSystemProxySnapshot = nil
             isSystemProxyEnabled = false
+            systemProxyErrorMessage = nil
+            return true
         } catch {
-            lastErrorMessage = error.localizedDescription
+            // Some protocol settings may still point at our listener.
+            isSystemProxyEnabled = true
+            systemProxyErrorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    private func loadSystemProxyRecoveryIfNeeded() throws {
+        guard let recovery = try pendingSystemProxyRecovery() else { return }
+        previousSystemProxySnapshot = recovery.snapshot
+        previousSystemProxyService = recovery.service
+        managedSystemProxySnapshot = recovery.managedProxy
+    }
+
+    private func pendingSystemProxyRecovery() throws -> SystemProxyRecoveryState? {
+        guard previousSystemProxySnapshot == nil,
+              let recovery = try systemProxyRecoveryRepository.load() else { return nil }
+        guard !recovery.isOwnedByRunningProcess else { throw SystemProxyError.ownedByAnotherInstance }
+        return recovery
+    }
+
+    private func legacyManagedSystemProxySnapshot() -> SystemProxySnapshot {
+        // Older receipts predate ownership metadata. The last runtime file
+        // records the ports actually used, including automatic port changes.
+        let settings = try? MihomoConfigurationInspector.inspect(url: profileRepository.runtimeConfigURL)
+        return .enabled(host: proxyHost, httpPort: settings?.httpPort ?? httpPort, socksPort: settings?.socksPort ?? socksPort)
     }
 
     private func waitForController() async -> Bool {
