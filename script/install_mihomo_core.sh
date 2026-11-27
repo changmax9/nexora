@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${MIHOMO_VERSION:-v1.19.33}"
+VERSION="${MIHOMO_VERSION:-v1.19.34}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT_DIR/core"
 CORE_PATH="$CORE_DIR/mihomo"
@@ -17,11 +17,11 @@ trap cleanup EXIT
 case "$(uname -m)" in
   arm64)
     ASSET="mihomo-darwin-arm64-${VERSION}.gz"
-    DEFAULT_SHA256="060b64b0f2c9a310831db0fe4adb2878de67bfa606c311813c1f13966aa504b6"
+    DEFAULT_SHA256="1a7a20eca63fbbaec90137717465bfde488d0db2a3a79b8fadebf9b2545b6e4c"
     ;;
   x86_64)
     ASSET="mihomo-darwin-amd64-compatible-${VERSION}.gz"
-    DEFAULT_SHA256="eefe967b74312f70b64efa0dfa54929d00c7af8e94416e1b12df09863a40f35b"
+    DEFAULT_SHA256="703bceaa494732fa456f47e6ac2f06bf0bc5593d4c927d5f61e10f1a31039c37"
     ;;
   *)
     echo "Unsupported macOS architecture: $(uname -m)" >&2
@@ -29,9 +29,9 @@ case "$(uname -m)" in
     ;;
 esac
 
-# Digests are from the official v1.19.33 GitHub Release assets. Custom
+# Digests are from the official v1.19.34 GitHub Release assets. Custom
 # versions must supply their own digest rather than bypass verification.
-if [[ "$VERSION" == "v1.19.33" ]]; then
+if [[ "$VERSION" == "v1.19.34" ]]; then
   EXPECTED_SHA256="${MIHOMO_SHA256:-$DEFAULT_SHA256}"
 else
   EXPECTED_SHA256="${MIHOMO_SHA256:-}"
