@@ -72,7 +72,7 @@ Build the community DMG locally with an Apple signing identity. This keeps the
 app, Mihomo, and the TUN helper signed by the same team:
 
 ```bash
-CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 0.3.0 --community
+CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 1.0.0 --community
 ```
 
 Stage that exact DMG and a source archive in a draft GitHub Release at a tag
