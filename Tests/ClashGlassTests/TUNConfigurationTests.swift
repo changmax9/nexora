@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import NexoraTUNSupport
 import Testing
@@ -114,4 +115,296 @@ final class FakePrivilegedTUNRuntime: PrivilegedTUNRuntime {
     #expect(await service.runtimeOutput().isEmpty)
     service.invalidate()
     #expect(!service.isRunning)
+}
+
+@Test func tunServiceIdentityRequirementValidatesTeamIdentifier() throws {
+    let valid = try TUNServiceIdentity.requirement(
+        identifier: "com.maxchang.Nexora",
+        teamIdentifier: "WW3RYA2Y7G"
+    )
+    #expect(valid == "anchor apple generic and identifier \"com.maxchang.Nexora\" and certificate leaf[subject.OU] = \"WW3RYA2Y7G\"")
+    #expect(throws: (any Error).self) {
+        try TUNServiceIdentity.requirement(identifier: "com.maxchang.Nexora", teamIdentifier: "invalid-team!")
+    }
+}
+
+@Test func tunExecutableSnapshotDetectsReplacementAndDeletion() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tun-snapshot-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let targetURL = tempDir.appendingPathComponent("NexoraTUNHelper")
+    let stagedURL = tempDir.appendingPathComponent("NexoraTUNHelper.new")
+    try Data("v1".utf8).write(to: targetURL)
+    try Data("v2".utf8).write(to: stagedURL)
+
+    let snapshot = try #require(TUNExecutableSnapshot.capture(path: targetURL.path))
+    #expect(snapshot.matchesCurrentOnDisk())
+
+    #expect(Darwin.rename(stagedURL.path, targetURL.path) == 0)
+    #expect(!snapshot.matchesCurrentOnDisk())
+
+    let updatedSnapshot = try #require(TUNExecutableSnapshot.capture(path: targetURL.path))
+    #expect(updatedSnapshot != snapshot)
+    #expect(updatedSnapshot.matchesCurrentOnDisk())
+
+    try FileManager.default.removeItem(at: targetURL)
+    #expect(!updatedSnapshot.matchesCurrentOnDisk())
+    #expect(TUNExecutableSnapshot.capture(path: targetURL.path) == nil)
+}
+
+@Test func tunHelperLifecyclePolicyHandlesStaleAndMinimumRuntime() {
+    #expect(!TUNHelperLifecyclePolicy.shouldRejectAndExitOnIncomingConnection(binaryMatchesOnDisk: true, hasActiveProcess: false))
+    #expect(!TUNHelperLifecyclePolicy.shouldRejectAndExitOnIncomingConnection(binaryMatchesOnDisk: true, hasActiveProcess: true))
+    #expect(TUNHelperLifecyclePolicy.shouldRejectAndExitOnIncomingConnection(binaryMatchesOnDisk: false, hasActiveProcess: false))
+    #expect(!TUNHelperLifecyclePolicy.shouldRejectAndExitOnIncomingConnection(binaryMatchesOnDisk: false, hasActiveProcess: true))
+
+    #expect(TUNHelperLifecyclePolicy.idleExitDelay(binaryMatchesOnDisk: false, uptimeSeconds: 0) == 0)
+    #expect(TUNHelperLifecyclePolicy.idleExitDelay(binaryMatchesOnDisk: false, uptimeSeconds: 100) == 0)
+    #expect(
+        TUNHelperLifecyclePolicy.idleExitDelay(
+            binaryMatchesOnDisk: true,
+            uptimeSeconds: 1,
+            minimumRuntimeSeconds: 12,
+            idleGraceSeconds: 3
+        ) == 11
+    )
+    #expect(
+        TUNHelperLifecyclePolicy.idleExitDelay(
+            binaryMatchesOnDisk: true,
+            uptimeSeconds: 10,
+            minimumRuntimeSeconds: 12,
+            idleGraceSeconds: 15
+        ) == 15
+    )
+}
+
+private final class FakeTUNDaemonManager: TUNDaemonManaging, @unchecked Sendable {
+    private let lock = NSLock()
+    var statusValue: TUNDaemonStatus = .enabled
+    var registerOutcomeStatus: TUNDaemonStatus?
+    var registerError: Error?
+    var unregisterError: Error?
+    private(set) var registerCount = 0
+    private(set) var unregisterCount = 0
+    private(set) var openApprovalSettingsCount = 0
+
+    func status() -> TUNDaemonStatus {
+        lock.withLock { statusValue }
+    }
+
+    func register() throws {
+        try lock.withLock {
+            registerCount += 1
+            if let outcome = registerOutcomeStatus {
+                statusValue = outcome
+            }
+            if let registerError {
+                throw registerError
+            }
+        }
+    }
+
+    func unregister() async throws {
+        try lock.withLock {
+            unregisterCount += 1
+            if let unregisterError {
+                throw unregisterError
+            }
+        }
+    }
+
+    @MainActor func openApprovalSettings() {
+        lock.withLock { openApprovalSettingsCount += 1 }
+    }
+}
+
+private final class FakeTUNHelperSession: TUNHelperSession, @unchecked Sendable {
+    private let lock = NSLock()
+    private let startError: Error?
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var invalidateCount = 0
+
+    init(startError: Error? = nil) {
+        self.startError = startError
+    }
+
+    func start(configuration: Data) async throws {
+        try lock.withLock {
+            startCount += 1
+            if let startError {
+                throw startError
+            }
+        }
+    }
+
+    func stop() async {
+        lock.withLock { stopCount += 1 }
+    }
+
+    func status() async throws -> TUNHealth {
+        TUNHealth(running: true, output: "")
+    }
+
+    func invalidate() {
+        lock.withLock { invalidateCount += 1 }
+    }
+}
+
+@MainActor
+@Test func privilegedTUNRecoversOnRetryAfterSingleXPCInterruption() async throws {
+    let daemon = FakeTUNDaemonManager()
+    let session1 = FakeTUNHelperSession(
+        startError: NSError(domain: NSCocoaErrorDomain, code: NSXPCConnectionInterrupted)
+    )
+    let session2 = FakeTUNHelperSession()
+    var createdSessions = 0
+    let service = PrivilegedTUNService(
+        daemon: daemon,
+        requirementProvider: { "anchor apple generic" },
+        sessionFactory: { _ in
+            createdSessions += 1
+            return createdSessions == 1 ? session1 : session2
+        },
+        retryDelay: .milliseconds(5),
+        reregisterDelay: .milliseconds(5)
+    )
+
+    try await service.start(configuration: Data("ok".utf8))
+    defer { service.invalidate() }
+
+    #expect(service.isRunning)
+    #expect(createdSessions == 2)
+    #expect(session1.invalidateCount >= 1)
+    #expect(session2.startCount == 1)
+    #expect(daemon.unregisterCount == 0)
+    #expect(daemon.registerCount == 0)
+}
+
+@MainActor
+@Test func privilegedTUNReregistersDaemonAfterTwoConsecutiveXPCFailures() async throws {
+    let daemon = FakeTUNDaemonManager()
+    let session1 = FakeTUNHelperSession(
+        startError: NSError(domain: NSCocoaErrorDomain, code: NSXPCConnectionInterrupted)
+    )
+    let session2 = FakeTUNHelperSession(
+        startError: NSError(domain: NSCocoaErrorDomain, code: NSXPCConnectionInvalid)
+    )
+    let session3 = FakeTUNHelperSession()
+    var createdSessions = 0
+    let service = PrivilegedTUNService(
+        daemon: daemon,
+        requirementProvider: { "anchor apple generic" },
+        sessionFactory: { _ in
+            createdSessions += 1
+            switch createdSessions {
+            case 1: return session1
+            case 2: return session2
+            default: return session3
+            }
+        },
+        retryDelay: .milliseconds(5),
+        reregisterDelay: .milliseconds(5)
+    )
+
+    try await service.start(configuration: Data("ok".utf8))
+    defer { service.invalidate() }
+
+    #expect(service.isRunning)
+    #expect(createdSessions == 3)
+    #expect(daemon.unregisterCount == 1)
+    #expect(daemon.registerCount == 1)
+    #expect(session3.startCount == 1)
+}
+
+@MainActor
+@Test func privilegedTUNPromptsForApprovalIfReregistrationRequiresApproval() async {
+    let daemon = FakeTUNDaemonManager()
+    daemon.registerOutcomeStatus = .requiresApproval
+    var createdSessions = 0
+    let service = PrivilegedTUNService(
+        daemon: daemon,
+        requirementProvider: { "anchor apple generic" },
+        sessionFactory: { _ in
+            createdSessions += 1
+            return FakeTUNHelperSession(
+                startError: NSError(domain: NSCocoaErrorDomain, code: NSXPCConnectionInvalid)
+            )
+        },
+        retryDelay: .milliseconds(5),
+        reregisterDelay: .milliseconds(5)
+    )
+
+    do {
+        try await service.start(configuration: Data("ok".utf8))
+        Issue.record("Expected approval error when re-registration requires user approval.")
+    } catch {
+        #expect(error.localizedDescription.contains("Login Items & Extensions"))
+    }
+
+    #expect(!service.isRunning)
+    #expect(createdSessions == 2)
+    #expect(daemon.unregisterCount == 1)
+    #expect(daemon.registerCount == 1)
+    #expect(daemon.openApprovalSettingsCount == 1)
+}
+
+@MainActor
+@Test func privilegedTUNSurfacesUpgradeGuidanceWhenAllRetriesFail() async {
+    let daemon = FakeTUNDaemonManager()
+    var createdSessions = 0
+    let service = PrivilegedTUNService(
+        daemon: daemon,
+        requirementProvider: { "anchor apple generic" },
+        sessionFactory: { _ in
+            createdSessions += 1
+            return FakeTUNHelperSession(
+                startError: NSError(domain: NSCocoaErrorDomain, code: NSXPCConnectionInterrupted)
+            )
+        },
+        retryDelay: .milliseconds(5),
+        reregisterDelay: .milliseconds(5)
+    )
+
+    do {
+        try await service.start(configuration: Data("ok".utf8))
+        Issue.record("Expected stale helper recovery message when all attempts fail.")
+    } catch {
+        #expect(error.localizedDescription == PrivilegedTUNService.staleHelperRecoveryMessage)
+    }
+
+    #expect(!service.isRunning)
+    #expect(createdSessions == 3)
+    #expect(daemon.unregisterCount == 1)
+    #expect(daemon.registerCount == 1)
+}
+
+@MainActor
+@Test func privilegedTUNDoesNotRetryOrReregisterOnNonXPCErrors() async {
+    let daemon = FakeTUNDaemonManager()
+    var createdSessions = 0
+    let service = PrivilegedTUNService(
+        daemon: daemon,
+        requirementProvider: { "anchor apple generic" },
+        sessionFactory: { _ in
+            createdSessions += 1
+            return FakeTUNHelperSession(startError: TUNServiceError("fixture: bad payload"))
+        },
+        retryDelay: .milliseconds(5),
+        reregisterDelay: .milliseconds(5)
+    )
+
+    do {
+        try await service.start(configuration: Data("ok".utf8))
+        Issue.record("Expected direct failure without retries.")
+    } catch {
+        #expect(error.localizedDescription == "fixture: bad payload")
+    }
+
+    #expect(!service.isRunning)
+    #expect(createdSessions == 1)
+    #expect(daemon.unregisterCount == 0)
+    #expect(daemon.registerCount == 0)
 }

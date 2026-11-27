@@ -687,3 +687,63 @@ import Testing
     #expect(!ModeRowInteractionPolicy.triggersActionOnPressDown)
     #expect(ModeRowInteractionPolicy.minimumHitHeight >= 40)
 }
+
+@MainActor
+@Test func manualUpdateCheckHandlesUpToDateUpdateAvailableAndUnavailableFlows() throws {
+    let rootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let suiteName = "UpdateCheckTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let store = AppStore(
+        profileRepository: ManagedProfileRepository(rootURL: rootURL),
+        userDefaults: defaults
+    )
+
+    // Missing handler immediately reports unavailable without sticking in checking state.
+    store.requestManualUpdateCheck()
+    #expect(!store.isCheckingForUpdates)
+    #expect(store.manualUpdateCheckResult == .failed(message: store.text(.updateCheckUnavailable)))
+    store.dismissManualUpdateCheckResult()
+    #expect(store.manualUpdateCheckResult == nil)
+
+    // Up-to-date flow ignores duplicate taps while in flight.
+    var checkCount = 0
+    var installCount = 0
+    store.onCheckForUpdatesRequested = { checkCount += 1 }
+    store.onInstallUpdateRequested = { installCount += 1 }
+
+    store.requestManualUpdateCheck()
+    #expect(store.isCheckingForUpdates)
+    store.requestManualUpdateCheck()
+    #expect(checkCount == 1)
+
+    store.finishManualUpdateCheck(.upToDate(currentVersion: "1.0.1"))
+    #expect(!store.isCheckingForUpdates)
+    #expect(store.manualUpdateCheckResult == .upToDate(currentVersion: "1.0.1"))
+    store.dismissManualUpdateCheckResult()
+    #expect(store.manualUpdateCheckResult == nil)
+
+    // Update-available flow invokes Sparkle installation callback on proceed.
+    store.requestManualUpdateCheck()
+    #expect(checkCount == 2)
+    store.finishManualUpdateCheck(.updateAvailable(currentVersion: "1.0.1", latestVersion: "1.0.2"))
+    #expect(!store.isCheckingForUpdates)
+    #expect(store.manualUpdateCheckResult == .updateAvailable(currentVersion: "1.0.1", latestVersion: "1.0.2"))
+
+    store.proceedWithSparkleUpdate()
+    #expect(store.manualUpdateCheckResult == nil)
+    #expect(installCount == 1)
+
+    // Formal localized messages interpolate version strings cleanly in both zh-Hans and English.
+    let zhUpdate = AppLanguage.simplifiedChinese.updateAvailableMessage(currentVersion: "1.0.1", latestVersion: "1.0.2")
+    let zhLatest = AppLanguage.simplifiedChinese.upToDateMessage(currentVersion: "1.0.1")
+    let enUpdate = AppLanguage.english.updateAvailableMessage(currentVersion: "1.0.1", latestVersion: "1.0.2")
+    let enLatest = AppLanguage.english.upToDateMessage(currentVersion: "1.0.1")
+    #expect(zhUpdate.contains("1.0.1") && zhUpdate.contains("1.0.2"))
+    #expect(zhLatest.contains("1.0.1"))
+    #expect(enUpdate.contains("1.0.1") && enUpdate.contains("1.0.2"))
+    #expect(enLatest.contains("1.0.1"))
+}

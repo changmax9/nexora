@@ -202,7 +202,31 @@ public struct AppSettingsView: View {
     private var aboutSettings: some View {
         VStack(spacing: 14) {
             SettingsGroup(title: store.text(.about), symbol: "info.circle") {
-                SettingsValueRow(title: store.text(.version), value: appVersion)
+                HStack(alignment: .center, spacing: 14) {
+                    Text(store.text(.version))
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                    Spacer()
+                    Text(appVersion)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    LiquidActionButton(
+                        title: store.isCheckingForUpdates
+                            ? store.text(.checkingForUpdates)
+                            : store.text(.checkForUpdates),
+                        symbol: "arrow.triangle.2.circlepath",
+                        tint: store.accent.color(for: colorScheme).opacity(0.24),
+                        compact: true
+                    ) {
+                        store.requestManualUpdateCheck()
+                    }
+                    .disabled(store.isCheckingForUpdates)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+
+                Divider().opacity(0.12)
+
                 SettingsValueRow(
                     title: store.text(.engine),
                     value: store.text(.poweredByMihomo)

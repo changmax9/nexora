@@ -165,6 +165,10 @@ public final class AppStore {
     public var uploadTrafficUnit = "B"
     public var downloadTrafficUnit = "B"
     private(set) var trafficUsageTotals = TrafficUsageTotals.zero
+    @ObservationIgnored public var onCheckForUpdatesRequested: (@MainActor () -> Void)?
+    @ObservationIgnored public var onInstallUpdateRequested: (@MainActor () -> Void)?
+    public private(set) var isCheckingForUpdates = false
+    public var manualUpdateCheckResult: ManualUpdateCheckResult?
     // Proxy cleanup failures must survive successful traffic/config responses.
     public private(set) var systemProxyErrorMessage: String? {
         didSet {
@@ -190,6 +194,35 @@ public final class AppStore {
     public func dismissErrorAlert() {
         acknowledgedSystemProxyError = systemProxyErrorMessage
         transientErrorMessage = nil
+    }
+
+    public func requestManualUpdateCheck() {
+        guard !isCheckingForUpdates else { return }
+        manualUpdateCheckResult = nil
+        guard let onCheckForUpdatesRequested else {
+            manualUpdateCheckResult = .failed(message: text(.updateCheckUnavailable))
+            return
+        }
+        isCheckingForUpdates = true
+        onCheckForUpdatesRequested()
+    }
+
+    public func finishManualUpdateCheck(_ result: ManualUpdateCheckResult) {
+        isCheckingForUpdates = false
+        manualUpdateCheckResult = result
+    }
+
+    public func cancelManualUpdateCheck() {
+        isCheckingForUpdates = false
+    }
+
+    public func dismissManualUpdateCheckResult() {
+        manualUpdateCheckResult = nil
+    }
+
+    public func proceedWithSparkleUpdate() {
+        manualUpdateCheckResult = nil
+        onInstallUpdateRequested?()
     }
     public private(set) var profileValidationStates: [ManagedProfile.ID: ProfileValidationState] = [:]
     var isLatencyTesting = false
