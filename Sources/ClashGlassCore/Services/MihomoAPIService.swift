@@ -313,7 +313,7 @@ enum MihomoAPIDecoder {
             }
         }
         return response.proxies
-            .filter { _, proxy in proxy.all?.isEmpty == false }
+            .filter { $0.value.all?.isEmpty == false && $0.value.hidden != true }
             .keys
             .sorted()
             .compactMap { name in
@@ -321,7 +321,7 @@ enum MihomoAPIDecoder {
                     return nil
                 }
                 let now = proxy.now ?? all.first
-                let nodes = all.map { nodeName in
+                let nodes = all.filter { response.proxies[$0]?.hidden != true }.map { nodeName in
                     let region = regionCode(from: nodeName)
                     let metadata = response.proxies[nodeName] ?? providerNodes[nodeName]?.proxy
                     let latency = metadata?
@@ -491,6 +491,7 @@ private struct ProxyResponse: Decodable {
     let all: [String]?
     let history: [ProxyHistory]?
     let testURL: String?
+    let hidden: Bool?
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -499,6 +500,7 @@ private struct ProxyResponse: Decodable {
         case all
         case history
         case testURL = "testUrl"
+        case hidden
     }
 }
 

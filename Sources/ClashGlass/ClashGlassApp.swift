@@ -97,9 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate, @p
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.store?.resumeRuntimeAfterWake()
-            }
+            Task { @MainActor [weak self] in await self?.store?.resumeRuntimeAfterWake() }
+            Task { @MainActor [weak self] in await self?.store?.checkForAnnouncement() }
         }
         // A local installer can reconnect without depending on a live chat or
         // UI automation after replacing a running VPN client.

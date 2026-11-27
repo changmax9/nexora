@@ -29,6 +29,7 @@ TUN state through Mihomo's controller API.
 - English, Simplified Chinese, Traditional Chinese, Japanese, French, Russian,
   Spanish, and Portuguese interface support
 - Signed in-app updates powered by Sparkle
+- Liquid Glass broadcast announcements ([docs/announcements.md](docs/announcements.md))
 - No bundled subscriptions, sample profiles, or telemetry
 
 ## Requirements
@@ -72,7 +73,7 @@ Build the community DMG locally with an Apple signing identity. This keeps the
 app, Mihomo, and the TUN helper signed by the same team:
 
 ```bash
-CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 1.0.1 --community
+CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 1.0.2 --community
 ```
 
 Stage that exact DMG and a source archive in a draft GitHub Release at a tag

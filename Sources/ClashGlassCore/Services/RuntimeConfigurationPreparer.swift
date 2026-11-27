@@ -232,15 +232,7 @@ public struct RuntimeConfigurationPreparer: Sendable {
             ruleIndentation = "  "
         }
         if !routingOverrides.isEmpty {
-            guard existingRules == nil || existingRules?.null != nil || existingRules?.sequence != nil else {
-                throw RuntimeConfigurationError.invalidRules
-            }
-            let generated = routingOverrides.sorted { $0.domain < $1.domain }.compactMap { rule -> Node? in
-                if rule.policy == .vpn, vpnRuleTarget == nil { return nil }
-                let target = rule.policy.ruleTarget(vpnTarget: vpnRuleTarget ?? "")
-                return Node("DOMAIN-SUFFIX,\(rule.domain),\(target)", Tag(.str), .singleQuoted)
-            }
-            configuration["rules"] = Node(generated + (existingRules?.array() ?? []), .implicit, .block)
+            try prependRoutingOverrides(routingOverrides, vpnTarget: vpnRuleTarget, to: &configuration)
         }
 
         // Emit one complete YAML document. A literal scalar with a keep-chomping
@@ -260,6 +252,57 @@ public struct RuntimeConfigurationPreparer: Sendable {
             output = lines.joined(separator: "\n")
         }
         return output
+    }
+
+    private func prependRoutingOverrides(
+        _ overrides: [RoutingOverride], vpnTarget: String?, to configuration: inout Node
+    ) throws {
+        let existingRules = MihomoYAMLValue.value("rules", in: configuration)
+        guard existingRules == nil || existingRules?.null != nil || existingRules?.sequence != nil else {
+            throw RuntimeConfigurationError.invalidRules
+        }
+
+        var groups = MihomoYAMLValue.value("proxy-groups", in: configuration)?.array() ?? []
+        let proxies = MihomoYAMLValue.value("proxies", in: configuration)?.array() ?? []
+        let staticNames = Set((proxies + groups).compactMap { MihomoYAMLValue.value("name", in: $0)?.string })
+        let hasProviders = MihomoYAMLValue.value("proxy-providers", in: configuration)?.mapping?.isEmpty == false
+        var usedNames = staticNames
+        var aliases: [String: String] = [:]
+        var rules: [Node] = []
+
+        // Mihomo takes the first matching suffix. A child domain must precede its parent.
+        let ordered = overrides.sorted {
+            let lhs = $0.domain.split(separator: ".").count
+            let rhs = $1.domain.split(separator: ".").count
+            return lhs == rhs ? $0.domain < $1.domain : lhs > rhs
+        }
+        for rule in ordered {
+            guard let target = rule.resolvedRuleTarget(vpnTarget: vpnTarget) else { continue }
+            let fromProvider = rule.policy == .customNode && hasProviders && !staticNames.contains(target)
+            var destination = target
+            if fromProvider || target.contains(",") {
+                if let existing = aliases[target] {
+                    destination = existing
+                } else {
+                    let base = RoutingOverrideTargetBridge.bridgeGroupName(for: target)
+                    destination = base
+                    var suffix = 1
+                    while !usedNames.insert(destination).inserted {
+                        destination = "\(base)-\(suffix)"
+                        suffix += 1
+                    }
+                    aliases[target] = destination
+                    groups.append(RoutingOverrideTargetBridge.group(
+                        named: destination, target: target, fromProvider: fromProvider
+                    ))
+                }
+            }
+            rules.append(Node("DOMAIN-SUFFIX,\(rule.domain),\(destination)", Tag(.str), .singleQuoted))
+        }
+        if !aliases.isEmpty {
+            configuration["proxy-groups"] = Node(groups, .implicit, .block)
+        }
+        configuration["rules"] = Node(rules + (existingRules?.array() ?? []), .implicit, .block)
     }
 
     private func normalizeLegacyDNSPolicies(in configuration: inout Node) -> Bool {

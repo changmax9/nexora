@@ -21,6 +21,15 @@ public final class AppStore {
     private let diagnosticExplanationService: DiagnosticExplanationService
     private let proxySelectionRepository: ProxySelectionRepository
     private let routingOverrideRepository: RoutingOverrideRepository
+    private let announcementService: AnnouncementService
+    private let announcementDismissalStore: AnnouncementDismissalStore
+    private let appVersionProvider: @Sendable () -> String?
+    private let nowProvider: @Sendable () -> Date
+    @ObservationIgnored private var lastSuccessfulAnnouncementFetch: Date?
+    @ObservationIgnored private var isFetchingAnnouncement = false
+    @ObservationIgnored private var fetchedAnnouncement: Announcement?
+    @ObservationIgnored private var announcementBoundaryTask: Task<Void, Never>?
+    private let announcementRefreshCooldown: TimeInterval = 1800
     private var previousSystemProxySnapshot: SystemProxySnapshot?
     private var previousSystemProxyService: String?
     private var managedSystemProxySnapshot: SystemProxySnapshot?
@@ -131,6 +140,14 @@ public final class AppStore {
     public private(set) var profileTrafficRefreshFailures: Set<ManagedProfile.ID> = []
     public private(set) var selectedManagedProfileID: ManagedProfile.ID?
     var routingOverrides: [RoutingOverride] = []
+    private var profileStaticRoutingTargets: [RoutingProxyTarget] = []
+
+    var availableRoutingProxyTargets: [RoutingProxyTarget] {
+        RoutingProxyTargetCatalog.mergedTargets(
+            staticTargets: profileStaticRoutingTargets,
+            liveGroups: selectedProfileProxyGroups
+        )
+    }
     public private(set) var controllerURL = URL(string: "http://127.0.0.1:9090")!
     public private(set) var controllerSecret: String?
     public var externalIP = "Detecting..." { didSet { if oldValue != externalIP { invalidateNetworkDiagnosis() } } }
@@ -169,6 +186,8 @@ public final class AppStore {
     @ObservationIgnored public var onInstallUpdateRequested: (@MainActor () -> Void)?
     public private(set) var isCheckingForUpdates = false
     public var manualUpdateCheckResult: ManualUpdateCheckResult?
+    public private(set) var activeAnnouncement: Announcement?
+    public private(set) var latestAnnouncement: Announcement?
     // Proxy cleanup failures must survive successful traffic/config responses.
     public private(set) var systemProxyErrorMessage: String? {
         didSet {
@@ -224,6 +243,72 @@ public final class AppStore {
         manualUpdateCheckResult = nil
         onInstallUpdateRequested?()
     }
+
+    public func checkForAnnouncement(force: Bool = false) async {
+        guard !isFetchingAnnouncement else { return }
+        let now = nowProvider()
+        if !force,
+           let lastFetch = lastSuccessfulAnnouncementFetch,
+           now.timeIntervalSince(lastFetch) < announcementRefreshCooldown {
+            updateAnnouncementPresentation(at: now)
+            return
+        }
+        isFetchingAnnouncement = true
+        defer { isFetchingAnnouncement = false }
+        do {
+            fetchedAnnouncement = try await announcementService.fetchLatestAnnouncement()
+            lastSuccessfulAnnouncementFetch = nowProvider()
+        } catch {
+            // Offline, the last successful response still follows its local display window.
+        }
+        updateAnnouncementPresentation(at: nowProvider())
+    }
+
+    private func updateAnnouncementPresentation(at now: Date) {
+        announcementBoundaryTask?.cancel()
+        announcementBoundaryTask = nil
+        if let item = fetchedAnnouncement, item.isActive(at: now, appVersion: appVersionProvider()) {
+            latestAnnouncement = item
+            if activeAnnouncement?.id == item.id || announcementDismissalStore.shouldPresent(item, at: now) {
+                activeAnnouncement = item
+            } else {
+                activeAnnouncement = nil
+            }
+        } else {
+            latestAnnouncement = nil
+            activeAnnouncement = nil
+        }
+
+        let nextBoundary = [fetchedAnnouncement?.startsAt, fetchedAnnouncement?.expiresAt]
+            .compactMap { $0 }.filter { $0 > now }.min()
+        if let nextBoundary {
+            announcementBoundaryTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(nextBoundary.timeIntervalSince(now)))
+                } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                self.updateAnnouncementPresentation(at: self.nowProvider())
+            }
+        }
+    }
+
+    deinit {
+        announcementBoundaryTask?.cancel()
+    }
+
+    public func dismissActiveAnnouncement() {
+        guard let announcement = activeAnnouncement else { return }
+        announcementDismissalStore.markDismissed(announcement, at: nowProvider())
+        activeAnnouncement = nil
+    }
+
+    public func reopenLatestAnnouncement() {
+        guard let latest = latestAnnouncement,
+              latest.isActive(at: nowProvider(), appVersion: appVersionProvider()) else {
+            return
+        }
+        activeAnnouncement = latest
+    }
     public private(set) var profileValidationStates: [ManagedProfile.ID: ProfileValidationState] = [:]
     var isLatencyTesting = false
     var latencyTestProgress = LatencyTestProgress(completed: 0, total: 0)
@@ -254,6 +339,11 @@ public final class AppStore {
         diagnosticExplanationService: DiagnosticExplanationService = DiagnosticExplanationService(),
         websiteComparisonService: WebsiteComparisonService = WebsiteComparisonService(),
         proxySelectionRepository: ProxySelectionRepository? = nil,
+        announcementService: AnnouncementService = AnnouncementService(),
+        appVersionProvider: @escaping @Sendable () -> String? = {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        },
+        nowProvider: @escaping @Sendable () -> Date = Date.init,
         userDefaults: UserDefaults = .standard,
         automaticallyMonitorsRuntime: Bool = true
     ) {
@@ -273,6 +363,10 @@ public final class AppStore {
         websiteComparison = WebsiteComparisonStore(service: websiteComparisonService)
         self.proxySelectionRepository = proxySelectionRepository
             ?? ProxySelectionRepository(rootURL: profileRepository.rootURL)
+        self.announcementService = announcementService
+        self.announcementDismissalStore = AnnouncementDismissalStore(userDefaults: userDefaults)
+        self.appVersionProvider = appVersionProvider
+        self.nowProvider = nowProvider
         routingOverrideRepository = RoutingOverrideRepository(rootURL: profileRepository.rootURL)
         appearanceMode = AppAppearance(
             rawValue: userDefaults.string(forKey: "appearanceMode") ?? ""
@@ -553,7 +647,11 @@ public final class AppStore {
         }
     }
 
-    func addRoutingOverride(input: String, policy: RoutingPolicy) async {
+    func addRoutingOverride(
+        input: String,
+        policy: RoutingPolicy,
+        proxyName: String? = nil
+    ) async {
         await beginRuntimeTransition()
         defer { endRuntimeTransition() }
         guard let profileID = selectedManagedProfileID else {
@@ -562,22 +660,35 @@ public final class AppStore {
         }
         do {
             let domain = try RoutingInputNormalizer.domain(from: input)
-            if policy == .vpn,
-               let profile = selectedManagedProfile {
-                let yaml = try String(
-                    contentsOf: profile.managedConfigURL,
-                    encoding: .utf8
-                )
-                guard RoutingVPNTargetResolver.target(from: yaml) != nil else {
-                    throw RuntimeConfigurationError.missingVPNPolicyGroup
+            let normalizedProxyName: String?
+            switch policy {
+            case .vpn:
+                normalizedProxyName = nil
+                if let profile = selectedManagedProfile {
+                    let yaml = try String(
+                        contentsOf: profile.managedConfigURL,
+                        encoding: .utf8
+                    )
+                    guard RoutingVPNTargetResolver.target(from: yaml) != nil else {
+                        throw RuntimeConfigurationError.missingVPNPolicyGroup
+                    }
                 }
+            case .customNode:
+                let trimmed = proxyName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !trimmed.isEmpty else {
+                    throw RoutingInputError.missingProxyNode
+                }
+                normalizedProxyName = trimmed
+            case .direct:
+                normalizedProxyName = nil
             }
             let candidateOverrides = routingOverrides.filter { $0.domain != domain }
-                + [RoutingOverride(domain: domain, policy: policy)]
+                + [RoutingOverride(domain: domain, policy: policy, proxyName: normalizedProxyName)]
             try await validateRoutingChanges(candidateOverrides)
             try routingOverrideRepository.upsert(
                 domain: domain,
                 policy: policy,
+                proxyName: normalizedProxyName,
                 profileID: profileID
             )
             reloadRoutingOverrides()
@@ -1837,7 +1948,14 @@ public final class AppStore {
     private func reloadRoutingOverrides() {
         guard let profileID = selectedManagedProfileID else {
             routingOverrides = []
+            profileStaticRoutingTargets = []
             return
+        }
+        if let profile = selectedManagedProfile,
+           let yaml = try? String(contentsOf: profile.managedConfigURL, encoding: .utf8) {
+            profileStaticRoutingTargets = RoutingProxyTargetCatalog.staticTargets(fromYAML: yaml)
+        } else {
+            profileStaticRoutingTargets = []
         }
         do {
             routingOverrides = try routingOverrideRepository.overrides(profileID: profileID)

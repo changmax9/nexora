@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Yams
 @testable import ClashGlassCore
 
 @Test func runtimePortsCannotCollideWithEachOtherOrKeepDuplicateHTTPListeners() throws {
@@ -540,4 +541,190 @@ import Testing
     """
 
     #expect(RoutingVPNTargetResolver.target(from: yaml) == "SampleRoutes")
+}
+
+@Test func customNodeRoutingOverridesSupportDirectNodesCommaBridgesAndLegacyJSON() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let sourceURL = directory.appendingPathComponent("source.yaml")
+    let runtimeURL = directory.appendingPathComponent("Runtime", isDirectory: true)
+    let geoDataURL = directory.appendingPathComponent("GeoData", isDirectory: true)
+    try FileManager.default.createDirectory(at: geoDataURL, withIntermediateDirectories: true)
+    let yaml = """
+    mixed-port: 7890
+    external-controller: 127.0.0.1:9090
+    proxies:
+      - name: '🇯🇵 日本 JP01'
+        type: ss
+        server: 1.2.3.4
+        port: 443
+        cipher: aes-128-gcm
+        password: test
+      - name: '🇭🇰 香港 HK01 | IEPL'
+        type: ss
+        server: 1.2.3.5
+        port: 443
+        cipher: aes-128-gcm
+        password: test
+      - name: 'US, Los Angeles 01'
+        type: ss
+        server: 1.2.3.6
+        port: 443
+        cipher: aes-128-gcm
+        password: test
+    proxy-groups:
+      - name: Proxy
+        type: select
+        proxies:
+          - '🇯🇵 日本 JP01'
+          - '🇭🇰 香港 HK01 | IEPL'
+          - 'US, Los Angeles 01'
+    rules:
+      - MATCH,Proxy
+    """
+    try yaml.write(to: sourceURL, atomically: true, encoding: .utf8)
+    try Data("geoip".utf8).write(to: geoDataURL.appendingPathComponent("GEOIP.dat"))
+    try Data("geosite".utf8).write(to: geoDataURL.appendingPathComponent("GEOSITE.dat"))
+
+    // 1. Legacy JSON without proxyName still decodes cleanly.
+    let legacyJSON = Data(#"[{"domain":"openai.com","policy":"vpn"},{"domain":"example.cn","policy":"direct"}]"#.utf8)
+    let legacy = try JSONDecoder().decode([RoutingOverride].self, from: legacyJSON)
+    #expect(legacy == [
+        RoutingOverride(domain: "openai.com", policy: .vpn),
+        RoutingOverride(domain: "example.cn", policy: .direct),
+    ])
+
+    // 2. Repository persists and reloads customNode overrides with proxyName.
+    let profileID = UUID()
+    let repo = RoutingOverrideRepository(rootURL: directory)
+    try repo.upsert(domain: "netflix.com", policy: .customNode, proxyName: "🇭🇰 香港 HK01 | IEPL", profileID: profileID)
+    try repo.upsert(domain: "hulu.com", policy: .customNode, proxyName: "US, Los Angeles 01", profileID: profileID)
+    let saved = try repo.overrides(profileID: profileID)
+    #expect(saved.count == 2)
+    #expect(saved.first(where: { $0.domain == "netflix.com" })?.proxyName == "🇭🇰 香港 HK01 | IEPL")
+    #expect(saved.first(where: { $0.domain == "hulu.com" })?.proxyName == "US, Los Angeles 01")
+
+    // 3. RuntimeConfigurationPreparer emits direct node rule and hidden bridge group for comma targets.
+    let preparer = RuntimeConfigurationPreparer(
+        geoDataSourceURL: geoDataURL,
+        portAllocator: RuntimePortAllocator(
+            isTCPPortAvailable: { _, _ in true },
+            isUDPPortAvailable: { _, _ in true }
+        )
+    )
+    let prepared = try preparer.prepare(
+        sourceURL: sourceURL,
+        runtimeDirectoryURL: runtimeURL,
+        routingOverrides: saved
+    )
+    let runtime = try String(contentsOf: prepared.configURL, encoding: .utf8)
+    let bridgeAlias = RoutingOverrideTargetBridge.bridgeGroupName(for: "US, Los Angeles 01")
+    let parsed = try #require(try Yams.load(yaml: runtime) as? [String: Any])
+    let rules = try #require(parsed["rules"] as? [String])
+    #expect(rules.prefix(2) == [
+        "DOMAIN-SUFFIX,hulu.com,\(bridgeAlias)",
+        "DOMAIN-SUFFIX,netflix.com,🇭🇰 香港 HK01 | IEPL",
+    ])
+    let groups = try #require(parsed["proxy-groups"] as? [[String: Any]])
+    let bridgeGroup = try #require(groups.first(where: { ($0["name"] as? String) == bridgeAlias }))
+    #expect((bridgeGroup["hidden"] as? Bool) == true)
+    #expect((bridgeGroup["proxies"] as? [String]) == ["US, Los Angeles 01"])
+
+    // 4. Target catalog parses YAML nodes & groups, merges live latencies, and excludes meta/hidden entries.
+    let staticTargets = RoutingProxyTargetCatalog.staticTargets(fromYAML: yaml)
+    #expect(staticTargets.filter { !$0.isGroup }.map(\.name) == [
+        "🇯🇵 日本 JP01",
+        "🇭🇰 香港 HK01 | IEPL",
+        "US, Los Angeles 01",
+    ])
+    #expect(staticTargets.filter(\.isGroup).map(\.name) == ["Proxy"])
+
+    let liveGroups = [
+        ProxyGroup(
+            name: "Proxy",
+            policy: "Selector",
+            kind: .selector,
+            nodes: [
+                ProxyNode(name: "🇭🇰 香港 HK01 | IEPL", region: "HK", latency: 38, isSelected: false),
+                ProxyNode(name: "Provider SG01", region: "SG", latency: 52, isSelected: false, providerName: "sub"),
+                ProxyNode(name: "DIRECT", region: "Proxy", latency: nil, isSelected: false),
+            ]
+        ),
+        ProxyGroup(name: "GLOBAL", policy: "Selector", kind: .selector, nodes: []),
+    ]
+    let merged = RoutingProxyTargetCatalog.mergedTargets(staticTargets: staticTargets, liveGroups: liveGroups)
+    #expect(merged.first(where: { $0.name == "🇭🇰 香港 HK01 | IEPL" })?.latency == 38)
+    #expect(merged.contains(where: { $0.name == "Provider SG01" && !$0.isGroup }))
+    #expect(!merged.contains(where: { $0.name == "DIRECT" || $0.name == "GLOBAL" }))
+
+    // 5. MihomoAPIDecoder hides bridge & hidden:true groups from the Proxies UI.
+    let proxiesJSON = Data("""
+    {
+      "proxies": {
+        "Proxy": { "name": "Proxy", "type": "Selector", "now": "🇯🇵 日本 JP01", "all": ["🇯🇵 日本 JP01"] },
+        "\(bridgeAlias)": { "name": "\(bridgeAlias)", "type": "Selector", "hidden": true, "now": "US, Los Angeles 01", "all": ["US, Los Angeles 01"] }
+      }
+    }
+    """.utf8)
+    let decodedGroups = try MihomoAPIDecoder.proxyGroups(from: proxiesJSON)
+    #expect(decodedGroups.map(\.name) == ["Proxy"])
+}
+
+@MainActor
+@Test func appStoreAddRoutingOverrideSupportsSpecificNodeAndRejectsMissingNode() async throws {
+    let rootURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("custom-node-store-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let suiteName = "CustomNodeStoreTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let sourceURL = rootURL.appendingPathComponent("sample.yaml")
+    try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+    try """
+    mixed-port: 7890
+    external-controller: 127.0.0.1:9090
+    proxies:
+      - name: JP01
+        type: ss
+        server: 1.2.3.4
+        port: 443
+        cipher: aes-128-gcm
+        password: test
+      - name: HK01
+        type: ss
+        server: 1.2.3.5
+        port: 443
+        cipher: aes-128-gcm
+        password: test
+    proxy-groups:
+      - name: Proxy
+        type: select
+        proxies: [JP01, HK01]
+    rules:
+      - MATCH,Proxy
+    """.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+    let repo = ManagedProfileRepository(rootURL: rootURL)
+    let imported = try await repo.importProfile(from: sourceURL) { _ in .success }
+    try repo.select(imported.id)
+
+    let store = AppStore(
+        profileRepository: repo,
+        userDefaults: defaults,
+        automaticallyMonitorsRuntime: false
+    )
+
+    #expect(store.availableRoutingProxyTargets.contains(where: { $0.name == "HK01" && !$0.isGroup }))
+
+    await store.addRoutingOverride(input: "netflix.com", policy: .customNode, proxyName: nil)
+    #expect(store.routingOverrides.isEmpty)
+    #expect(store.lastErrorMessage != nil)
+
+    await store.addRoutingOverride(input: "https://www.netflix.com/browse", policy: .customNode, proxyName: "HK01")
+    #expect(store.lastErrorMessage == nil)
+    #expect(store.routingOverrides == [
+        RoutingOverride(domain: "www.netflix.com", policy: .customNode, proxyName: "HK01"),
+    ])
 }

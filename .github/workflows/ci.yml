@@ -17,5 +17,7 @@ jobs:
         run: swift test
       - name: Verify safe core installation
         run: ./script/test_mihomo_installer.sh
+      - name: Verify announcement CLI
+        run: ./script/test_announce.sh
       - name: Release build
         run: swift build -c release

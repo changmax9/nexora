@@ -2,14 +2,17 @@ import AppKit
 import SwiftUI
 
 public enum LiquidControlMotion {
-    public static func scale(isHovering: Bool, isPressed: Bool, reduceMotion: Bool) -> Double {
+    public static func scale(
+        isHovering: Bool, isPressed: Bool, reduceMotion: Bool,
+        hoverScale: Double = 1.025, pressedScale: Double = 0.975
+    ) -> Double {
         guard !reduceMotion else {
             return 1
         }
         if isPressed {
-            return 0.975
+            return pressedScale
         }
-        return isHovering ? 1.025 : 1
+        return isHovering ? hoverScale : 1
     }
 }
 
@@ -399,49 +402,35 @@ private struct LiquidGlassButtonBody<Label: View>: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Group {
-            if #available(macOS 26.0, *) {
-                if #available(macOS 27.0, *) {
-                    label
-                        .glassEffect(.regular.tint(tint).interactive(!reduceMotion), in: .rect(cornerRadius: radius))
-                } else {
-                    label
-                        .glassEffect(.regular.tint(tint), in: .rect(cornerRadius: radius))
-                }
-            } else {
-                label
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .strokeBorder(
-                                Color.primary.opacity(colorScheme == .dark ? 0.15 : 0.09),
-                                lineWidth: 1
-                            )
-                    }
-            }
+        // Track the laid-out bounds while only the visible surface moves.
+        ZStack {
+            surface
+                .scaleEffect(LiquidControlMotion.scale(
+                    isHovering: isHovering, isPressed: isPressed, reduceMotion: reduceMotion,
+                    hoverScale: hoverScale, pressedScale: pressedScale
+                ))
+                .offset(y: isHovering && !isPressed && !reduceMotion ? -1.5 : 0)
+                .brightness(isHovering ? 0.025 : 0)
+                .shadow(color: .black.opacity(isHovering && !reduceMotion ? 0.12 : 0), radius: 10, y: 5)
         }
         .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .scaleEffect(LiquidControlMotion.scale(
-            isHovering: isHovering,
-            isPressed: isPressed,
-            reduceMotion: reduceMotion
-        ) == 1 ? 1 : isPressed ? pressedScale : hoverScale)
-        .offset(y: isHovering && !isPressed && !reduceMotion ? -1.5 : 0)
-        .brightness(isHovering ? 0.025 : 0)
-        .shadow(
-            color: .black.opacity(isHovering && !reduceMotion ? 0.12 : 0),
-            radius: 10,
-            y: 5
-        )
-        .animation(
-            reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72),
-            value: isHovering
-        )
-        .animation(
-            reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.68),
-            value: isPressed
-        )
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.72), value: isHovering)
+        .animation(reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.68), value: isPressed)
         .onHover { isHovering = $0 }
+    }
+
+    @ViewBuilder
+    private var surface: some View {
+        if #available(macOS 26, *) {
+            label.glassEffect(.regular.tint(tint), in: .rect(cornerRadius: radius))
+        } else {
+            let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+            label
+                .background(.ultraThinMaterial, in: shape)
+                .overlay {
+                    shape.strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.15 : 0.09), lineWidth: 1)
+                }
+        }
     }
 }
 

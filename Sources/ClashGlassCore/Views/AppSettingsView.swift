@@ -231,6 +231,31 @@ public struct AppSettingsView: View {
                     title: store.text(.engine),
                     value: store.text(.poweredByMihomo)
                 )
+
+                if let latest = store.latestAnnouncement {
+                    Divider().opacity(0.12)
+
+                    HStack(alignment: .center, spacing: 14) {
+                        Text(store.text(.announcementRowTitle))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                        Spacer()
+                        Text(latest.resolvedContent(for: store.language).title)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        LiquidActionButton(
+                            title: store.text(.viewLatestAnnouncement),
+                            symbol: "megaphone",
+                            tint: store.accent.color(for: colorScheme).opacity(0.24),
+                            compact: true
+                        ) {
+                            store.reopenLatestAnnouncement()
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                }
             }
 
             SettingsGroup(title: store.text(.legalNotice), symbol: "exclamationmark.shield") {

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 public struct ContentView: View {
@@ -12,46 +13,41 @@ public struct ContentView: View {
     public var body: some View {
         let accent = store.accent.color(for: colorScheme)
         let palette = GlassPalette(colorScheme: colorScheme, accent: accent)
+        let modal = activeGlassModal
         GeometryReader { geometry in
             let layout = AppChromeLayoutMetrics(
                 availableWidth: Double(geometry.size.width),
                 availableHeight: Double(geometry.size.height)
             )
 
-            ZStack {
-                WindowGlassBackground(appearance: store.glassAppearance).ignoresSafeArea()
+            HStack(spacing: 0) {
+                IconRail(store: store)
+                    .frame(width: CGFloat(layout.railWidth))
+                    .zIndex(RailSurfaceMetrics.railZIndex)
 
-                HStack(spacing: 0) {
-                    IconRail(store: store)
-                        .frame(width: CGFloat(layout.railWidth))
-                        .zIndex(RailSurfaceMetrics.railZIndex)
-
-                    MainStage(store: store, layout: layout)
-                        .zIndex(RailSurfaceMetrics.stageZIndex)
-                }
+                MainStage(store: store, layout: layout)
+                    .zIndex(RailSurfaceMetrics.stageZIndex)
             }
-            .alert(
-                updateAlertTitle,
-                isPresented: Binding(
-                    get: { store.manualUpdateCheckResult != nil },
-                    set: { if !$0 { store.dismissManualUpdateCheckResult() } }
-                )
-            ) {
-                switch store.manualUpdateCheckResult {
-                case .updateAvailable:
-                    Button(store.text(.updateWithSparkle)) {
-                        store.proceedWithSparkleUpdate()
-                    }
-                    Button(store.text(.updateLater), role: .cancel) {
-                        store.dismissManualUpdateCheckResult()
-                    }
-                case .upToDate, .failed, .none:
-                    Button(store.text(.ok)) {
-                        store.dismissManualUpdateCheckResult()
-                    }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            .disabled(modal != nil)
+            .accessibilityHidden(modal != nil)
+        }
+        .background {
+            WindowGlassBackground(appearance: store.glassAppearance)
+                .ignoresSafeArea()
+        }
+        .overlay {
+            if let modal {
+                ZStack {
+                    Color.black.opacity(colorScheme == .dark ? 0.22 : 0.10)
+                        .contentShape(Rectangle())
+                        .accessibilityHidden(true)
+
+                    modalContent(modal)
+                        .id(modal.id)
                 }
-            } message: {
-                Text(updateAlertMessage)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea()
             }
         }
         .foregroundStyle(palette.primaryText)
@@ -79,30 +75,37 @@ public struct ContentView: View {
         } message: {
             Text(store.errorAlertMessage ?? "")
         }
-        .task {
-            await store.refreshNetworkIdentity()
+        .task { await store.refreshNetworkIdentity() }
+        .task { await store.checkForAnnouncement() }
+        .onChange(of: store.isStarted) { _, started in
+            if started {
+                Task { await store.checkForAnnouncement() }
+            }
         }
     }
 
-    private var updateAlertTitle: String {
-        switch store.manualUpdateCheckResult {
-        case .updateAvailable: store.text(.updateAvailableTitle)
-        case .upToDate: store.text(.upToDateTitle)
-        case .failed: store.text(.updateCheckFailedTitle)
-        case .none: ""
-        }
+    private var activeGlassModal: ActiveGlassModal? {
+        if let result = store.manualUpdateCheckResult { return .updateCheck(result) }
+        return store.activeAnnouncement.map(ActiveGlassModal.announcement)
     }
 
-    private var updateAlertMessage: String {
-        switch store.manualUpdateCheckResult {
-        case let .updateAvailable(current, latest):
-            store.language.updateAvailableMessage(currentVersion: current, latestVersion: latest)
-        case let .upToDate(current):
-            store.language.upToDateMessage(currentVersion: current)
-        case let .failed(detail):
-            store.language.updateCheckFailedMessage(detail: detail)
-        case .none:
-            ""
+    @ViewBuilder
+    private func modalContent(_ modal: ActiveGlassModal) -> some View {
+        switch modal {
+        case let .announcement(announcement):
+            AnnouncementModalSheet(
+                announcement: announcement,
+                store: store,
+                onOpenURL: { NSWorkspace.shared.open($0) },
+                onDismiss: { store.dismissActiveAnnouncement() }
+            )
+        case let .updateCheck(result):
+            UpdateCheckModalSheet(
+                result: result,
+                store: store,
+                onInstallUpdate: { store.proceedWithSparkleUpdate() },
+                onDismiss: { store.dismissManualUpdateCheckResult() }
+            )
         }
     }
 }
@@ -153,6 +156,8 @@ private struct IconRail: View {
                     hoverState.update(item: item, isHovering: hovering)
                 }
                 .help(store.text(section.titleKey))
+                .accessibilityLabel(store.text(section.titleKey))
+                .accessibilityAddTraits(store.selectedSection == section ? .isSelected : [])
             }
 
             Spacer()

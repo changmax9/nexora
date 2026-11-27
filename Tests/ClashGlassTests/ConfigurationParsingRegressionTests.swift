@@ -78,6 +78,45 @@ struct ConfigurationParsingRegressionTests {
         #expect(try String(contentsOf: fixture.sourceURL, encoding: .utf8) == yaml)
     }
 
+    @Test func specificDomainRoutesToAnExactProviderNodeWithoutShadowingExistingGroups() throws {
+        let node = "US, [01]`A"
+        let reserved = RoutingOverrideTargetBridge.bridgeGroupName(for: node)
+        let fixture = try ParsingFixture(yaml: """
+        proxy-providers: {sub: {type: file, path: sub.yaml}}
+        proxy-groups:
+          - {name: 'VPN, Group', type: select, use: [sub]}
+          - {name: '\(reserved)', type: select, proxies: [DIRECT]}
+        rules: ['MATCH,DIRECT']
+        """)
+        defer { fixture.remove() }
+        let prepared = try fixture.preparer.prepare(
+            sourceURL: fixture.sourceURL, runtimeDirectoryURL: fixture.runtimeURL,
+            routingOverrides: [
+                RoutingOverride(domain: "example.com", policy: .direct),
+                RoutingOverride(domain: "video.example.com", policy: .customNode, proxyName: node),
+                RoutingOverride(domain: "vpn.example", policy: .vpn),
+            ]
+        )
+        let yaml = try String(contentsOf: prepared.configURL, encoding: .utf8)
+        let doc = try #require(try Yams.compose(yaml: yaml))
+        let rules = try #require(doc["rules"]?.array(of: String.self))
+        let groups = try #require(doc["proxy-groups"]?.array())
+        let provider = try #require(groups.first { $0["include-all-providers"]?.bool == true })
+        let name = try #require(provider["name"]?.string)
+        #expect(name != reserved)
+        let filter = try #require(provider["filter"]?.string)
+        #expect(!filter.contains("`"))
+        #expect(node.range(of: filter, options: .regularExpression) != nil)
+        #expect((node + " Extra").range(of: filter, options: .regularExpression) == nil)
+        #expect("US, 0`A".range(of: filter, options: .regularExpression) == nil)
+        #expect(provider["empty-fallback"]?.string == "REJECT")
+        #expect(rules.first == "DOMAIN-SUFFIX,video.example.com,\(name)")
+        #expect(rules[1] == "DOMAIN-SUFFIX,example.com,DIRECT")
+        let vpn = try #require(groups.first { $0["proxies"]?.array(of: String.self) == ["VPN, Group"] })
+        let vpnGroup = try #require(vpn["name"]?.string)
+        #expect(rules[2] == "DOMAIN-SUFFIX,vpn.example,\(vpnGroup)")
+    }
+
     @Test func runtimeRewritingPreservesUnrelatedScalarValuesAndDNSOptions() throws {
         let yaml = """
         mixed-port: 17890 # listener
