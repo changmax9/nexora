@@ -30,6 +30,29 @@ public struct ContentView: View {
                         .zIndex(RailSurfaceMetrics.stageZIndex)
                 }
             }
+            .alert(
+                updateAlertTitle,
+                isPresented: Binding(
+                    get: { store.manualUpdateCheckResult != nil },
+                    set: { if !$0 { store.dismissManualUpdateCheckResult() } }
+                )
+            ) {
+                switch store.manualUpdateCheckResult {
+                case .updateAvailable:
+                    Button(store.text(.updateWithSparkle)) {
+                        store.proceedWithSparkleUpdate()
+                    }
+                    Button(store.text(.updateLater), role: .cancel) {
+                        store.dismissManualUpdateCheckResult()
+                    }
+                case .upToDate, .failed, .none:
+                    Button(store.text(.ok)) {
+                        store.dismissManualUpdateCheckResult()
+                    }
+                }
+            } message: {
+                Text(updateAlertMessage)
+            }
         }
         .foregroundStyle(palette.primaryText)
         .tint(accent)
@@ -58,6 +81,28 @@ public struct ContentView: View {
         }
         .task {
             await store.refreshNetworkIdentity()
+        }
+    }
+
+    private var updateAlertTitle: String {
+        switch store.manualUpdateCheckResult {
+        case .updateAvailable: store.text(.updateAvailableTitle)
+        case .upToDate: store.text(.upToDateTitle)
+        case .failed: store.text(.updateCheckFailedTitle)
+        case .none: ""
+        }
+    }
+
+    private var updateAlertMessage: String {
+        switch store.manualUpdateCheckResult {
+        case let .updateAvailable(current, latest):
+            store.language.updateAvailableMessage(currentVersion: current, latestVersion: latest)
+        case let .upToDate(current):
+            store.language.upToDateMessage(currentVersion: current)
+        case let .failed(detail):
+            store.language.updateCheckFailedMessage(detail: detail)
+        case .none:
+            ""
         }
     }
 }

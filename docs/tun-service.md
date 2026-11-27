@@ -15,6 +15,7 @@ Enabling TUN registers the service. macOS may require approval in System Setting
 - Configuration is normalized to a loopback controller with a generated secret, LAN access disabled, and a private runtime directory.
 - File providers, escaping provider paths, and certificate file references are rejected. HTTP providers use private cache paths. Inline certificate material remains supported.
 - A session owns its process. App disconnection or helper termination stops that process and removes its private directory.
+- After an app upgrade, the helper exits when idle or when its on-disk executable changes so `launchd` starts the updated helper; the app retries interrupted XPC connections and re-registers the `SMAppService` daemon if an older helper rejects connection.
 - Approval failure keeps the existing runtime. Failed TUN startup attempts to restore the previous ordinary runtime.
 
 ## Verification status

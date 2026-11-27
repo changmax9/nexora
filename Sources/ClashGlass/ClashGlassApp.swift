@@ -47,17 +47,20 @@ struct ClashGlassApp: App {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUStandardUserDriverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {
     let systemAppearanceMonitor = SystemAppearanceMonitor()
     private var windowActivationAttempts = 0
     private var menuBarPanelController: MenuBarPanelController?
     private var updateAccessoryController: NSTitlebarAccessoryViewController?
     private var hasPendingUpdateReminder = false
+    private var isManualUpdateProbeInProgress = false
+    private var manualProbeResolved = false
+    private var pendingScheduledUpdateVersion: String?
     private var wakeObserver: NSObjectProtocol?
     private var automationCatalogObserver: NSObjectProtocol?
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
-        updaterDelegate: nil,
+        updaterDelegate: self,
         userDriverDelegate: self
     )
     var store: AppStore? {
@@ -69,6 +72,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
                 store: store,
                 systemAppearanceMonitor: systemAppearanceMonitor
             )
+            store.onCheckForUpdatesRequested = { [weak self] in
+                self?.beginManualUpdateCheck()
+            }
+            store.onInstallUpdateRequested = { [weak self] in
+                self?.launchSparkleInteractiveUpdate()
+            }
             _ = updaterController
         }
     }
@@ -200,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
             standardDriverWillShowUpdate: handleShowingUpdate,
             updateIsNotDownloaded: state.stage == .notDownloaded
         ) {
+            pendingScheduledUpdateVersion = update.displayVersionString
             hasPendingUpdateReminder = true
             showUpdateAccessory()
         } else {
@@ -216,8 +226,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
     }
 
     func standardUserDriverWillFinishUpdateSession() {
+        pendingScheduledUpdateVersion = nil
         hasPendingUpdateReminder = false
         removeUpdateAccessory()
+    }
+
+    private var currentAppVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "Development"
+    }
+
+    private var currentAppBuild: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    }
+
+    private func beginManualUpdateCheck() {
+        if let pendingVersion = pendingScheduledUpdateVersion {
+            store?.finishManualUpdateCheck(.updateAvailable(
+                currentVersion: currentAppVersion,
+                latestVersion: pendingVersion
+            ))
+            return
+        }
+        let updater = updaterController.updater
+        if updater.sessionInProgress {
+            if updater.canCheckForUpdates {
+                store?.cancelManualUpdateCheck()
+                updaterController.checkForUpdates(nil)
+            } else {
+                store?.finishManualUpdateCheck(.failed(
+                    message: store?.text(.updateCheckUnavailable) ?? "Update checks are currently unavailable."
+                ))
+            }
+            return
+        }
+        isManualUpdateProbeInProgress = true
+        manualProbeResolved = false
+        updater.checkForUpdateInformation()
+    }
+
+    private func launchSparkleInteractiveUpdate() {
+        DispatchQueue.main.async { [weak self] in
+            self?.updaterController.checkForUpdates(nil)
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        guard isManualUpdateProbeInProgress else { return }
+        manualProbeResolved = true
+        isManualUpdateProbeInProgress = false
+        store?.finishManualUpdateCheck(.updateAvailable(
+            currentVersion: currentAppVersion,
+            latestVersion: item.displayVersionString
+        ))
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
+        guard isManualUpdateProbeInProgress else { return }
+        manualProbeResolved = true
+        isManualUpdateProbeInProgress = false
+        let nsError = error as NSError
+        let reason = (nsError.userInfo[SPUNoUpdateFoundReasonKey] as? NSNumber)
+            .flatMap { SPUNoUpdateFoundReason(rawValue: OSStatus($0.int32Value)) }
+        switch reason {
+        case .onLatestVersion, .onNewerThanLatestVersion:
+            store?.finishManualUpdateCheck(.upToDate(currentVersion: currentAppVersion))
+        case .systemIsTooOld, .systemIsTooNew, .hardwareDoesNotSupportARM64:
+            store?.finishManualUpdateCheck(.failed(message: error.localizedDescription))
+        case .unknown, .none:
+            if let latestItem = nsError.userInfo[SPULatestAppcastItemFoundKey] as? SUAppcastItem,
+               let currentBuild = currentAppBuild,
+               SUStandardVersionComparator.default.compareVersion(
+                   currentBuild,
+                   toVersion: latestItem.versionString
+               ) == .orderedAscending {
+                store?.finishManualUpdateCheck(.updateAvailable(
+                    currentVersion: currentAppVersion,
+                    latestVersion: latestItem.displayVersionString
+                ))
+            } else {
+                store?.finishManualUpdateCheck(.upToDate(currentVersion: currentAppVersion))
+            }
+        @unknown default:
+            store?.finishManualUpdateCheck(.upToDate(currentVersion: currentAppVersion))
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+        guard isManualUpdateProbeInProgress, !manualProbeResolved else { return }
+        manualProbeResolved = true
+        isManualUpdateProbeInProgress = false
+        if let error {
+            let nsError = error as NSError
+            if nsError.domain == SUSparkleErrorDomain && nsError.code == Int(SUError.noUpdateError.rawValue) {
+                store?.finishManualUpdateCheck(.upToDate(currentVersion: currentAppVersion))
+            } else {
+                store?.finishManualUpdateCheck(.failed(message: error.localizedDescription))
+            }
+        } else {
+            store?.finishManualUpdateCheck(.upToDate(currentVersion: currentAppVersion))
+        }
     }
 
     private func showUpdateAccessory() {

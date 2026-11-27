@@ -6,7 +6,7 @@ public enum TUNServiceIdentity {
     public static let name = "com.maxchang.Nexora.TUNHelper"
     public static let plistName = name + ".plist"
 
-    public static func requirement(identifier: String) throws -> String {
+    public static func teamIdentifier() throws -> String {
         var code: SecCode?
         var staticCode: SecStaticCode?
         var information: CFDictionary?
@@ -17,7 +17,71 @@ public enum TUNServiceIdentity {
               team.range(of: "^[A-Z0-9]+$", options: .regularExpression) != nil else {
             throw TUNServiceError("TUN requires Nexora and its helper to be signed with an Apple development or distribution certificate.")
         }
-        return "anchor apple generic and identifier \"\(identifier)\" and certificate leaf[subject.OU] = \"\(team)\""
+        return team
+    }
+
+    public static func requirement(identifier: String, teamIdentifier: String) throws -> String {
+        guard teamIdentifier.range(of: "^[A-Z0-9]+$", options: .regularExpression) != nil else {
+            throw TUNServiceError("TUN requires Nexora and its helper to be signed with an Apple development or distribution certificate.")
+        }
+        return "anchor apple generic and identifier \"\(identifier)\" and certificate leaf[subject.OU] = \"\(teamIdentifier)\""
+    }
+
+    public static func requirement(identifier: String) throws -> String {
+        try requirement(identifier: identifier, teamIdentifier: teamIdentifier())
+    }
+}
+
+public struct TUNExecutableSnapshot: Equatable, Sendable {
+    public let path: String
+    public let device: UInt64
+    public let inode: UInt64
+
+    public init(path: String, device: UInt64, inode: UInt64) {
+        self.path = path
+        self.device = device
+        self.inode = inode
+    }
+
+    public static func capture(path: String) -> TUNExecutableSnapshot? {
+        let resolvedPath = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolvedPath),
+              let device = (attributes[.systemNumber] as? NSNumber)?.uint64Value,
+              let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value else {
+            return nil
+        }
+        return TUNExecutableSnapshot(
+            path: path,
+            device: device,
+            inode: inode
+        )
+    }
+
+    public func matchesCurrentOnDisk() -> Bool {
+        Self.capture(path: path) == self
+    }
+}
+
+public enum TUNHelperLifecyclePolicy {
+    // Keep normal idle exit past launchd's 10s minimum-runtime throttle window.
+    public static let minimumRuntimeSeconds: TimeInterval = 12
+    public static let defaultIdleGraceSeconds: TimeInterval = 15
+
+    public static func shouldRejectAndExitOnIncomingConnection(
+        binaryMatchesOnDisk: Bool,
+        hasActiveProcess: Bool
+    ) -> Bool {
+        !binaryMatchesOnDisk && !hasActiveProcess
+    }
+
+    public static func idleExitDelay(
+        binaryMatchesOnDisk: Bool,
+        uptimeSeconds: TimeInterval,
+        minimumRuntimeSeconds: TimeInterval = minimumRuntimeSeconds,
+        idleGraceSeconds: TimeInterval = defaultIdleGraceSeconds
+    ) -> TimeInterval {
+        guard binaryMatchesOnDisk else { return 0 }
+        return max(idleGraceSeconds, max(0, minimumRuntimeSeconds - uptimeSeconds))
     }
 }
 

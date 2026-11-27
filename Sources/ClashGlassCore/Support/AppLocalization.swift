@@ -35,6 +35,17 @@ public enum AppString: String, CaseIterable, Sendable {
     case disclaimerThirdParties
     case disclaimerIndemnity
     case update
+    case checkForUpdates
+    case checkingForUpdates
+    case updateAvailableTitle
+    case updateAvailableMessage
+    case updateWithSparkle
+    case updateLater
+    case upToDateTitle
+    case upToDateMessage
+    case updateCheckFailedTitle
+    case updateCheckFailedMessage
+    case updateCheckUnavailable
     case dashboard
     case diagnostics
     case proxies
@@ -311,6 +322,31 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
         )
     }
 
+    public func updateAvailableMessage(currentVersion: String, latestVersion: String) -> String {
+        String(
+            format: text(.updateAvailableMessage),
+            locale: locale,
+            currentVersion,
+            latestVersion
+        )
+    }
+
+    public func upToDateMessage(currentVersion: String) -> String {
+        String(
+            format: text(.upToDateMessage),
+            locale: locale,
+            currentVersion
+        )
+    }
+
+    public func updateCheckFailedMessage(detail: String) -> String {
+        String(
+            format: text(.updateCheckFailedMessage),
+            locale: locale,
+            detail
+        )
+    }
+
     private var resolvedLanguage: Self {
         guard self == .system else {
             return self
@@ -434,6 +470,17 @@ enum AppLocalization {
             .disclaimerThirdParties: ApplicationDisclaimer.thirdParties,
             .disclaimerIndemnity: ApplicationDisclaimer.indemnity,
             .update: "Update",
+            .checkForUpdates: "Check for Updates",
+            .checkingForUpdates: "Checking for Updates…",
+            .updateAvailableTitle: "Update Available",
+            .updateAvailableMessage: "A newer version of Nexora is available.\n\nCurrent Version: %@\nLatest Version: %@\n\nClick “Update Automatically via Sparkle” to download and install this release.",
+            .updateWithSparkle: "Update Automatically via Sparkle",
+            .updateLater: "Later",
+            .upToDateTitle: "You’re Up to Date",
+            .upToDateMessage: "Nexora %@ is currently the latest available version. No update is required.",
+            .updateCheckFailedTitle: "Unable to Check for Updates",
+            .updateCheckFailedMessage: "Nexora could not retrieve update information at this time. Please check your network connection and try again.\n\nDetails: %@",
+            .updateCheckUnavailable: "Update checks are currently unavailable. Please try again later.",
             .dashboard: "Dashboard",
             .diagnostics: "Diagnostics",
             .proxies: "Proxies",
@@ -616,7 +663,19 @@ enum AppLocalization {
             .disclaimerLiability: "在适用法律允许的最大范围内，本软件按“现状”和“可用状态”提供，不作任何担保。开发者及贡献者不对因本软件或其使用产生的任何直接、间接、附带、特殊、惩罚性或后果性损失承担责任，包括数据、隐私、利润、服务、账户、设备或网络可用性的损失。",
             .disclaimerThirdParties: "Mihomo、网络服务商、订阅服务商、网站及其他第三方组件或服务均独立于 Nexora，其可用性、安全性、内容、行为及条款不受开发者控制。",
             .disclaimerIndemnity: "在适用法律允许的最大范围内，您同意就因您的使用、误用、分发、配置或违反法律及第三方权利而产生的索赔、损害、处罚、责任、费用及合理法律费用，为开发者及贡献者进行抗辩、赔偿并使其免受损害。",
-            .update: "更新", .dashboard: "仪表盘", .diagnostics: "诊断",
+            .update: "更新",
+            .checkForUpdates: "检查更新",
+            .checkingForUpdates: "正在检查更新…",
+            .updateAvailableTitle: "发现可用更新",
+            .updateAvailableMessage: "检测到 Nexora 有新的正式版本可用。\n\n当前版本：%@\n最新版本：%@\n\n点击“通过 Sparkle 自动更新”即可自动下载并安装此版本。",
+            .updateWithSparkle: "通过 Sparkle 自动更新",
+            .updateLater: "稍后更新",
+            .upToDateTitle: "当前已是最新版本",
+            .upToDateMessage: "您当前使用的 Nexora %@ 已是公开发布的最新版本，无需更新。",
+            .updateCheckFailedTitle: "检查更新失败",
+            .updateCheckFailedMessage: "暂时无法获取最新版本信息，请确认网络连接正常后重试。\n\n详细信息：%@",
+            .updateCheckUnavailable: "当前无法启动更新检查，请稍后重试。",
+            .dashboard: "仪表盘", .diagnostics: "诊断",
             .proxies: "代理", .routing: "路由",
             .profiles: "配置", .connections: "连接",
             .coreStatus: "核心状态", .quickEdit: "快速编辑",
@@ -768,7 +827,19 @@ enum AppLocalization {
             .disclaimerLiability: "在適用法律允許的最大範圍內，本軟體按「現狀」及「可用狀態」提供，不作任何擔保。開發者及貢獻者不對因本軟體或其使用所產生的任何直接、間接、附帶、特殊、懲罰性或後果性損失承擔責任。",
             .disclaimerThirdParties: "Mihomo、網路供應商、訂閱供應商、網站及其他第三方元件或服務均獨立於 Nexora，其可用性、安全性、內容、行為及條款不受開發者控制。",
             .disclaimerIndemnity: "在適用法律允許的最大範圍內，您同意就因您的使用、誤用、散佈、設定或違反法律及第三方權利而產生的索賠、損害、處罰、責任、費用及合理法律費用，為開發者及貢獻者進行抗辯、賠償並使其免受損害。",
-            .update: "更新", .dashboard: "儀表板", .diagnostics: "診斷",
+            .update: "更新",
+            .checkForUpdates: "檢查更新",
+            .checkingForUpdates: "正在檢查更新…",
+            .updateAvailableTitle: "發現可用更新",
+            .updateAvailableMessage: "偵測到 Nexora 有新的正式版本可用。\n\n目前版本：%@\n最新版本：%@\n\n按一下「透過 Sparkle 自動更新」即可自動下載並安裝此版本。",
+            .updateWithSparkle: "透過 Sparkle 自動更新",
+            .updateLater: "稍後更新",
+            .upToDateTitle: "目前已是最新版本",
+            .upToDateMessage: "您目前使用的 Nexora %@ 已是公開發佈的最新版本，無須更新。",
+            .updateCheckFailedTitle: "檢查更新失敗",
+            .updateCheckFailedMessage: "暫時無法取得最新版本資訊，請確認網路連線正常後重試。\n\n詳細資訊：%@",
+            .updateCheckUnavailable: "目前無法啟動更新檢查，請稍後重試。",
+            .dashboard: "儀表板", .diagnostics: "診斷",
             .proxies: "代理", .routing: "路由",
             .profiles: "設定檔", .connections: "連線",
             .coreStatus: "核心狀態", .quickEdit: "快速編輯",
@@ -920,7 +991,19 @@ enum AppLocalization {
             .disclaimerLiability: "適用法で認められる最大限の範囲で、本ソフトウェアは現状有姿かつ提供可能な状態で、いかなる保証もなく提供されます。開発者および貢献者は、本ソフトウェアまたはその利用に起因する直接的・間接的・付随的・特別・懲罰的・結果的損害について責任を負いません。",
             .disclaimerThirdParties: "Mihomo、ネットワーク事業者、購読事業者、ウェブサイト、その他の第三者コンポーネントやサービスは Nexora とは独立しており、その可用性、安全性、内容、行為、規約は開発者の管理外です。",
             .disclaimerIndemnity: "適用法で認められる最大限の範囲で、利用、誤用、配布、設定、法令または第三者の権利の違反に起因する請求、損害、罰則、責任、費用および合理的な弁護士費用から、開発者および貢献者を防御・補償することに同意します。",
-            .update: "アップデート", .dashboard: "ダッシュボード", .diagnostics: "診断",
+            .update: "アップデート",
+            .checkForUpdates: "アップデートを確認",
+            .checkingForUpdates: "アップデートを確認中…",
+            .updateAvailableTitle: "新しいアップデートがあります",
+            .updateAvailableMessage: "Nexora の新しいリリース版が利用可能です。\n\n現在のバージョン：%@\n最新バージョン：%@\n\n「Sparkle で自動アップデート」をクリックすると、自動的にダウンロードしてインストールします。",
+            .updateWithSparkle: "Sparkle で自動アップデート",
+            .updateLater: "後で確認",
+            .upToDateTitle: "お使いのバージョンは最新です",
+            .upToDateMessage: "現在ご利用中の Nexora %@ は最新の公開バージョンです。アップデートの必要はありません。",
+            .updateCheckFailedTitle: "アップデートを確認できません",
+            .updateCheckFailedMessage: "現在アップデート情報を取得できません。ネットワーク接続をご確認のうえ、再試行してください。\n\n詳細：%@",
+            .updateCheckUnavailable: "現在アップデート確認を開始できません。しばらくしてから再試行してください。",
+            .dashboard: "ダッシュボード", .diagnostics: "診断",
             .proxies: "プロキシ",
             .routing: "ルーティング", .profiles: "プロファイル", .connections: "接続",
             .coreStatus: "コア状態", .quickEdit: "クイック編集", .cancel: "キャンセル",
@@ -1072,7 +1155,19 @@ enum AppLocalization {
             .disclaimerLiability: "Dans toute la mesure permise par la loi, le logiciel est fourni « en l’état » et « selon disponibilité », sans aucune garantie. Le développeur et les contributeurs ne répondent d’aucune perte directe, indirecte, accessoire, spéciale, punitive ou consécutive liée au logiciel ou à son utilisation.",
             .disclaimerThirdParties: "Mihomo, les fournisseurs de réseau ou d’abonnement, les sites web et les autres composants ou services tiers sont indépendants de Nexora. Leur disponibilité, sécurité, contenu, conduite et conditions échappent au contrôle du développeur.",
             .disclaimerIndemnity: "Dans toute la mesure permise par la loi, vous acceptez de défendre, indemniser et garantir le développeur et les contributeurs contre les réclamations, dommages, sanctions, responsabilités, frais et honoraires juridiques raisonnables résultant de votre utilisation, mauvaise utilisation, distribution, configuration ou violation de la loi ou des droits de tiers.",
-            .update: "Mise à jour", .dashboard: "Tableau de bord", .diagnostics: "Diagnostics",
+            .update: "Mise à jour",
+            .checkForUpdates: "Vérifier les mises à jour",
+            .checkingForUpdates: "Recherche de mises à jour…",
+            .updateAvailableTitle: "Mise à jour disponible",
+            .updateAvailableMessage: "Une nouvelle version officielle de Nexora est disponible.\n\nVersion actuelle : %@\nDernière version : %@\n\nCliquez sur « Mettre à jour automatiquement via Sparkle » pour télécharger et installer cette version.",
+            .updateWithSparkle: "Mettre à jour automatiquement via Sparkle",
+            .updateLater: "Plus tard",
+            .upToDateTitle: "Votre application est à jour",
+            .upToDateMessage: "Nexora %@ est actuellement la dernière version publiée. Aucune mise à jour n’est nécessaire.",
+            .updateCheckFailedTitle: "Échec de la vérification des mises à jour",
+            .updateCheckFailedMessage: "Impossible de récupérer les informations de mise à jour pour le moment. Vérifiez votre connexion réseau et réessayez.\n\nDétails : %@",
+            .updateCheckUnavailable: "La vérification des mises à jour est actuellement indisponible. Veuillez réessayer ultérieurement.",
+            .dashboard: "Tableau de bord", .diagnostics: "Diagnostics",
             .proxies: "Proxy",
             .routing: "Routage", .profiles: "Profils", .connections: "Connexions",
             .coreStatus: "État du moteur",
@@ -1228,7 +1323,19 @@ enum AppLocalization {
             .disclaimerLiability: "В максимально допустимой законом степени программа предоставляется «как есть» и «по мере доступности» без каких-либо гарантий. Разработчик и участники не несут ответственности за прямые, косвенные, случайные, специальные, штрафные или последующие убытки, связанные с программой или её использованием.",
             .disclaimerThirdParties: "Mihomo, сетевые и подписочные провайдеры, веб-сайты и другие сторонние компоненты или сервисы независимы от Nexora. Их доступность, безопасность, содержимое, поведение и условия не контролируются разработчиком.",
             .disclaimerIndemnity: "В максимально допустимой законом степени вы соглашаетесь защищать разработчика и участников и возмещать им претензии, ущерб, штрафы, обязательства, расходы и разумные юридические издержки, возникшие из-за использования, неправильного использования, распространения, настройки или нарушения закона либо прав третьих лиц.",
-            .update: "Обновить", .dashboard: "Панель", .diagnostics: "Диагностика",
+            .update: "Обновить",
+            .checkForUpdates: "Проверить обновления",
+            .checkingForUpdates: "Проверка обновлений…",
+            .updateAvailableTitle: "Доступно обновление",
+            .updateAvailableMessage: "Доступна новая официальная версия Nexora.\n\nТекущая версия: %@\nПоследняя версия: %@\n\nНажмите «Обновить автоматически через Sparkle», чтобы загрузить и установить это обновление.",
+            .updateWithSparkle: "Обновить автоматически через Sparkle",
+            .updateLater: "Позже",
+            .upToDateTitle: "Установлена актуальная версия",
+            .upToDateMessage: "Используемая вами версия Nexora %@ является самой новой из опубликованных. Обновление не требуется.",
+            .updateCheckFailedTitle: "Не удалось проверить обновления",
+            .updateCheckFailedMessage: "В данный момент не удаётся получить сведения об обновлениях. Проверьте сетевое подключение и повторите попытку.\n\nПодробности: %@",
+            .updateCheckUnavailable: "Проверка обновлений сейчас недоступна. Повторите попытку позже.",
+            .dashboard: "Панель", .diagnostics: "Диагностика",
             .proxies: "Прокси", .routing: "Маршрутизация",
             .profiles: "Профили", .connections: "Соединения",
             .coreStatus: "Состояние ядра",
@@ -1384,7 +1491,19 @@ enum AppLocalization {
             .disclaimerLiability: "En la máxima medida permitida por la ley, el software se proporciona «tal cual» y «según disponibilidad», sin garantías de ningún tipo. El desarrollador y los colaboradores no serán responsables de pérdidas directas, indirectas, incidentales, especiales, punitivas o consecuentes relacionadas con el software o su uso.",
             .disclaimerThirdParties: "Mihomo, los proveedores de red o suscripción, los sitios web y otros componentes o servicios de terceros son independientes de Nexora. Su disponibilidad, seguridad, contenido, conducta y condiciones quedan fuera del control del desarrollador.",
             .disclaimerIndemnity: "En la máxima medida permitida por la ley, aceptas defender, indemnizar y mantener indemnes al desarrollador y a los colaboradores frente a reclamaciones, daños, sanciones, responsabilidades, costes y honorarios legales razonables derivados de tu uso, uso indebido, distribución, configuración o infracción de la ley o de derechos de terceros.",
-            .update: "Actualizar", .dashboard: "Panel", .diagnostics: "Diagnóstico",
+            .update: "Actualizar",
+            .checkForUpdates: "Buscar actualizaciones",
+            .checkingForUpdates: "Buscando actualizaciones…",
+            .updateAvailableTitle: "Actualización disponible",
+            .updateAvailableMessage: "Hay una nueva versión oficial de Nexora disponible.\n\nVersión actual: %@\nÚltima versión: %@\n\nHaz clic en «Actualizar automáticamente con Sparkle» para descargar e instalar esta versión.",
+            .updateWithSparkle: "Actualizar automáticamente con Sparkle",
+            .updateLater: "Más tarde",
+            .upToDateTitle: "La aplicación está actualizada",
+            .upToDateMessage: "La versión de Nexora %@ que estás utilizando es la última publicada actualmente. No es necesario actualizar.",
+            .updateCheckFailedTitle: "Error al buscar actualizaciones",
+            .updateCheckFailedMessage: "No se pudo obtener la información de actualización en este momento. Comprueba la conexión de red e inténtalo de nuevo.\n\nDetalles: %@",
+            .updateCheckUnavailable: "La comprobación de actualizaciones no está disponible en este momento. Inténtalo de nuevo más tarde.",
+            .dashboard: "Panel", .diagnostics: "Diagnóstico",
             .proxies: "Proxies", .routing: "Enrutamiento",
             .profiles: "Perfiles", .connections: "Conexiones",
             .coreStatus: "Estado del núcleo",
@@ -1540,7 +1659,19 @@ enum AppLocalization {
             .disclaimerLiability: "Na máxima medida permitida por lei, o software é fornecido «tal como está» e «conforme disponível», sem garantias de qualquer tipo. O programador e os colaboradores não são responsáveis por perdas diretas, indiretas, incidentais, especiais, punitivas ou consequenciais relacionadas com o software ou a sua utilização.",
             .disclaimerThirdParties: "Mihomo, fornecedores de rede ou subscrição, sites e outros componentes ou serviços de terceiros são independentes do Nexora. A sua disponibilidade, segurança, conteúdo, conduta e termos estão fora do controlo do programador.",
             .disclaimerIndemnity: "Na máxima medida permitida por lei, concorda em defender, indemnizar e isentar o programador e os colaboradores de reclamações, danos, penalizações, responsabilidades, custos e honorários jurídicos razoáveis decorrentes da sua utilização, utilização indevida, distribuição, configuração ou violação da lei ou de direitos de terceiros.",
-            .update: "Atualizar", .dashboard: "Painel", .diagnostics: "Diagnóstico",
+            .update: "Atualizar",
+            .checkForUpdates: "Procurar atualizações",
+            .checkingForUpdates: "A procurar atualizações…",
+            .updateAvailableTitle: "Atualização disponível",
+            .updateAvailableMessage: "Está disponível uma nova versão oficial do Nexora.\n\nVersão atual: %@\nVersão mais recente: %@\n\nClique em «Atualizar automaticamente via Sparkle» para descarregar e instalar esta versão.",
+            .updateWithSparkle: "Atualizar automaticamente via Sparkle",
+            .updateLater: "Mais tarde",
+            .upToDateTitle: "Está atualizado",
+            .upToDateMessage: "O Nexora %@ que está a utilizar já é a versão mais recente disponível. Não é necessária nenhuma atualização.",
+            .updateCheckFailedTitle: "Falha ao procurar atualizações",
+            .updateCheckFailedMessage: "Não foi possível obter informações de atualização neste momento. Verifique a ligação à rede e tente novamente.\n\nDetalhes: %@",
+            .updateCheckUnavailable: "A verificação de atualizações não está disponível neste momento. Tente novamente mais tarde.",
+            .dashboard: "Painel", .diagnostics: "Diagnóstico",
             .proxies: "Proxies", .routing: "Encaminhamento",
             .profiles: "Perfis", .connections: "Ligações",
             .coreStatus: "Estado do núcleo",
