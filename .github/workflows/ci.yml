@@ -12,8 +12,10 @@ jobs:
   test:
     runs-on: xcode-27
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Test
         run: swift test
+      - name: Verify safe core installation
+        run: ./script/test_mihomo_installer.sh
       - name: Release build
         run: swift build -c release

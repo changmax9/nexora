@@ -1,0 +1,11 @@
+/* Nexora Siri and Shortcuts localization. */
+"Connect ${applicationName}" = "连接 ${applicationName}";
+"Turn on ${applicationName}" = "打开 ${applicationName}";
+"Disconnect ${applicationName}" = "断开 ${applicationName}";
+"Turn off ${applicationName}" = "关闭 ${applicationName}";
+"Enable TUN in ${applicationName}" = "启用 ${applicationName} 的 TUN";
+"Turn on ${applicationName} TUN" = "打开 ${applicationName} TUN";
+"Disable TUN in ${applicationName}" = "停用 ${applicationName} 的 TUN";
+"Turn off ${applicationName} TUN" = "关闭 ${applicationName} TUN";
+"Select a node in ${applicationName}" = "切换 ${applicationName} 的节点";
+"Use ${node} in ${applicationName}" = "将 ${applicationName} 的节点切换为 ${node}";

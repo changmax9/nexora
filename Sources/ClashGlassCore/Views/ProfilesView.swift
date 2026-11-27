@@ -16,16 +16,17 @@ struct ProfilesView: View {
             placeholder: "\(store.text(.search)) \(store.text(.profiles))",
             actions: [
                 .init(
+                    id: "refresh",
                     title: store.text(.refresh), symbol: "arrow.clockwise",
                     isDisabled: store.isRefreshingProfileTrafficUsage
                         || !store.managedProfiles.contains(where: { $0.subscriptionURL != nil })
                 ) {
                     Task { await store.refreshManagedProfileTrafficUsage() }
                 },
-                .init(title: store.text(.validateAll), symbol: "checkmark.shield") {
+                .init(id: "validateAll", title: store.text(.validateAll), symbol: "checkmark.shield") {
                     Task { await store.validateAllManagedProfiles() }
                 },
-                .init(title: store.text(.openManagedFolder), symbol: "folder") {
+                .init(id: "openManagedFolder", title: store.text(.openManagedFolder), symbol: "folder") {
                     ConfigurationFilePanel.reveal(store.managedProfilesFolderURL)
                 },
             ],

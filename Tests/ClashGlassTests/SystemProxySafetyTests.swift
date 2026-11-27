@@ -15,9 +15,9 @@ import Testing
     try repository.save(state)
 
     fixture.store.recoverSystemProxyAfterRelaunch()
-    await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
-    #expect(!fixture.store.isStarted)
-    #expect(fixture.store.lastErrorMessage == SystemProxyError.ownedByAnotherInstance.localizedDescription)
+    await #expect(throws: AutomationControlError.self) {
+        try await fixture.store.setConnectionEnabledForAutomation(true)
+    }
 
     #expect(fixture.recorder.commands.withLock { $0.isEmpty })
     #expect(fixture.recorder.captureRequests.withLock { $0.isEmpty })
@@ -67,7 +67,8 @@ import Testing
             apply: { command in recorder.commands.withLock { $0.append(command) } }
         ),
         profileRepository: ManagedProfileRepository(rootURL: fixture.directory.appendingPathComponent("Profiles")),
-        userDefaults: try #require(UserDefaults(suiteName: UUID().uuidString))
+        userDefaults: try #require(UserDefaults(suiteName: UUID().uuidString)),
+        automaticallyMonitorsRuntime: false
     )
 
     relaunched.recoverSystemProxyAfterRelaunch()
@@ -385,7 +386,8 @@ private final class SystemProxySafetyFixture {
                 }
             ),
             profileRepository: ManagedProfileRepository(rootURL: directory.appendingPathComponent("Profiles")),
-            userDefaults: defaults
+            userDefaults: defaults,
+            automaticallyMonitorsRuntime: false
         )
     }
 

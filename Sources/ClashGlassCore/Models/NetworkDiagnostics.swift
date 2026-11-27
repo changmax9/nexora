@@ -115,7 +115,8 @@ public struct NetworkPortCheck: Equatable, Identifiable, Sendable {
 
     public var ownerDescription: String {
         guard let ownerName else {
-            return "No listener"
+            if let ownerPID { return "Process pid \(ownerPID)" }
+            return isListening ? "Listener owner unavailable" : "No listener"
         }
         if let ownerPID {
             return "\(ownerName) pid \(ownerPID)"
@@ -566,8 +567,8 @@ public enum NetworkDiagnosticEngine {
             findings.append(NetworkDiagnosticFinding(
                 title: "Exit lookup failed",
                 detail: "Nexora could not fetch a fresh public IPv4 address, so stale country data was cleared.",
-                severity: .critical,
-                symbol: "xmark.octagon.fill"
+                severity: .warning,
+                symbol: "exclamationmark.triangle.fill"
             ))
         } else {
             let country = snapshot.countryName.isEmpty
@@ -584,7 +585,9 @@ public enum NetworkDiagnosticEngine {
         if snapshot.activeSystemTunnel {
             findings.append(NetworkDiagnosticFinding(
                 title: "Broad utun route detected",
-                detail: "macOS is routing public ranges through 198.18.x.x on a utun interface, so direct detection can still show the tunnel country.",
+                detail: snapshot.isTunEnabled
+                    ? "A broad utun route is present while Nexora TUN is configured. This check does not identify which app owns the route."
+                    : "macOS has a broad utun route. Its owning app is unverified, and direct detection can still show the tunnel country.",
                 severity: .warning,
                 symbol: "point.3.connected.trianglepath.dotted"
             ))
@@ -627,14 +630,21 @@ public enum NetworkDiagnosticEngine {
 
         for check in snapshot.portChecks {
             if check.isListening {
-                let isOwned = snapshot.coreProcessID.map { $0 == check.ownerPID }
-                // Privileged runtimes do not expose a PID; retain the active-runtime
-                // fallback there, while checking known ordinary-core ownership exactly.
-                let isExpected = isOwned ?? snapshot.isStarted
+                let portSeverity: NetworkDiagnosticSeverity
+                let portDetail: String
+                if let corePID = snapshot.coreProcessID, let ownerPID = check.ownerPID {
+                    portSeverity = corePID == ownerPID ? .healthy : snapshot.isStarted ? .critical : .warning
+                    portDetail = check.ownerDescription
+                } else {
+                    // A missing owner PID (or a privileged core's hidden PID)
+                    // cannot establish that another process took the port.
+                    portSeverity = .warning
+                    portDetail = "\(check.ownerDescription). Ownership by the Nexora core could not be verified."
+                }
                 findings.append(NetworkDiagnosticFinding(
                     title: "\(check.label) :\(check.port)",
-                    detail: check.ownerDescription,
-                    severity: isExpected ? .healthy : snapshot.isStarted ? .critical : .warning,
+                    detail: portDetail,
+                    severity: portSeverity,
                     symbol: "dot.radiowaves.left.and.right"
                 ))
             } else if snapshot.isStarted || snapshot.coreProcessID != nil {
@@ -670,11 +680,17 @@ public enum NetworkDiagnosticEngine {
             let failed = snapshot.endpointChecks.filter { !$0.isReachable }
             let slow = snapshot.endpointChecks.filter { ($0.latencyMilliseconds ?? 0) > 1_500 }
             if !failed.isEmpty {
+                // HTTP errors such as 429 and 503 are responses from a service,
+                // not proof that the entire internet connection is unavailable.
+                let onlyServiceErrors = failed.allSatisfy { $0.statusCode != nil }
+                let detail = failed.map { "\($0.name) (\($0.statusDescription))" }.joined(separator: ", ")
                 findings.append(NetworkDiagnosticFinding(
                     title: "External probes",
-                    detail: "Failed: \(failed.map { "\($0.name) (\($0.statusDescription))" }.joined(separator: ", "))",
-                    severity: .critical,
-                    symbol: "antenna.radiowaves.left.and.right.slash"
+                    detail: onlyServiceErrors
+                        ? "Services returned errors: \(detail). This alone does not show that all internet access is down."
+                        : "Failed: \(detail)",
+                    severity: onlyServiceErrors ? .warning : .critical,
+                    symbol: onlyServiceErrors ? "exclamationmark.triangle.fill" : "antenna.radiowaves.left.and.right.slash"
                 ))
             } else if !slow.isEmpty {
                 findings.append(NetworkDiagnosticFinding(
@@ -700,14 +716,19 @@ public enum NetworkDiagnosticEngine {
                 : .healthy
         let summary: String
         let action: String
-        if snapshot.activeSystemTunnel, snapshot.egressKind == .systemTunnel {
-            summary = snapshot.isStarted
-                ? "System tunnel is overriding Nexora proxy egress."
-                : "System tunnel is controlling the visible egress."
-            action = "Turn off the other VPN/TUN, then refresh."
-        } else if severity == .critical {
+        if severity == .critical {
             summary = "Network diagnosis found a blocking issue."
             action = "Fix the failed DNS, probe, or port check, then run again."
+        } else if snapshot.activeSystemTunnel, snapshot.egressKind == .systemTunnel {
+            summary = snapshot.isTunEnabled
+                ? "System tunnel route detected while Nexora TUN is configured."
+                : "System tunnel route detected; its owning app is unverified."
+            action = snapshot.isTunEnabled
+                ? "Confirm that the detected route belongs to Nexora before changing any VPN/TUN setting, then run again."
+                : "Check which app owns the tunnel and whether this route is intended, then run again."
+        } else if snapshot.endpointChecks.contains(where: { !$0.isReachable && $0.statusCode != nil }) {
+            summary = "An external diagnostic service returned an HTTP error."
+            action = "Retry the affected service later and compare another endpoint before changing the VPN."
         } else if snapshot.isStarted, snapshot.egressKind == .proxy {
             summary = "Nexora proxy egress is active."
             action = "Switch node or mode if this exit is unexpected."
@@ -718,10 +739,16 @@ public enum NetworkDiagnosticEngine {
             summary = "Nexora is running, but \(snapshot.egressKind.diagnosticFallbackLabel) is visible."
             action = "Check the route and probes, then refresh."
         } else if snapshot.portChecks.contains(where: {
-            $0.isListening && (snapshot.coreProcessID == nil || $0.ownerPID != snapshot.coreProcessID)
+            guard $0.isListening, let corePID = snapshot.coreProcessID, let ownerPID = $0.ownerPID else { return false }
+            return ownerPID != corePID
         }) {
             summary = "Another process is using a configured Nexora port."
             action = "Check the owning process in Port Radar before starting Nexora."
+        } else if snapshot.portChecks.contains(where: {
+            $0.isListening && (snapshot.coreProcessID == nil || $0.ownerPID == nil)
+        }) {
+            summary = "A configured port is listening; ownership could not be verified."
+            action = "Inspect the listener in Port Radar before changing or restarting any runtime."
         } else {
             summary = "Direct egress is visible."
             action = "No Nexora route conflict found."

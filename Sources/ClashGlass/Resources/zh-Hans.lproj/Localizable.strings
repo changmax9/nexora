@@ -1,0 +1,26 @@
+/* Nexora Siri and Shortcuts localization. */
+"Connect Nexora" = "连接 Nexora";
+"Start the connection using the selected Nexora configuration." = "使用当前选中的 Nexora 配置连接。";
+"Nexora is connected." = "Nexora 已连接。";
+"Disconnect Nexora" = "断开 Nexora";
+"Stop the Nexora connection and restore the previous system proxy settings." = "断开 Nexora 连接并恢复之前的系统代理设置。";
+"Nexora is disconnected." = "Nexora 已断开连接。";
+"Enable Nexora TUN" = "启用 Nexora TUN";
+"Enable Nexora TUN. macOS may request administrator approval the first time." = "启用 Nexora TUN。首次使用时，macOS 可能需要管理员授权。";
+"Nexora TUN is enabled." = "Nexora TUN 已启用。";
+"Nexora TUN will be enabled the next time you connect." = "下次连接 Nexora 时将启用 TUN。";
+"Disable Nexora TUN" = "停用 Nexora TUN";
+"Disable Nexora TUN while keeping an active Nexora connection in system proxy mode." = "停用 Nexora TUN；已连接时继续使用系统代理模式。";
+"Nexora TUN is disabled." = "Nexora TUN 已停用。";
+"Proxy Node" = "代理节点";
+"Select Nexora Proxy Node" = "切换 Nexora 代理节点";
+"Select a node in the current Nexora configuration. This does not start a VPN connection." = "选择当前 Nexora 配置中的节点；此操作不会开启 VPN 连接。";
+"Which Nexora proxy node would you like to use?" = "你想使用哪个 Nexora 代理节点？";
+"Which proxy group should use this node?" = "你想切换哪个代理组的节点？";
+"Select ${node}" = "选择 ${node}";
+"Nexora selected %@ in %@." = "Nexora 已在 %2$@ 中选择 %1$@。";
+"Connect" = "连接";
+"Disconnect" = "断开连接";
+"Enable TUN" = "启用 TUN";
+"Disable TUN" = "停用 TUN";
+"Select Node" = "切换节点";

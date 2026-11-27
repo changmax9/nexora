@@ -23,10 +23,11 @@ struct DiagnosticsView: View {
             toolbarLeading: AnyView(DiagnosticsToolbarBrief(store: store)),
             placeholder: "",
             actions: [
-                FeatureAction(title: store.text(.copyReport), symbol: "doc.on.doc", isDisabled: store.networkDiagnosticReport.findings.isEmpty) {
+                FeatureAction(id: "copyReport", title: store.text(.copyReport), symbol: "doc.on.doc", isDisabled: store.networkDiagnosticReport.findings.isEmpty) {
                     copyNetworkDoctorReport(store.networkDiagnosticReport.copyText)
                 },
                 FeatureAction(
+                    id: "diagnose",
                     title: store.text(.diagnose) + (store.isRunningNetworkDiagnosis ? "…" : ""),
                     symbol: store.isRunningNetworkDiagnosis ? "hourglass" : "stethoscope",
                     isDisabled: store.isRunningNetworkDiagnosis
@@ -39,7 +40,9 @@ struct DiagnosticsView: View {
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 DiagnosticsStatusStrip(store: store)
+                WebsiteComparisonCard(store: store)
                 NetworkDoctorOverviewCard(store: store)
+                DiagnosticExplanationCard(store: store)
                 DiagnosticsSectionCard(
                     symbol: "list.bullet.rectangle",
                     title: store.text(.findings),
@@ -100,11 +103,12 @@ private struct DiagnosticsToolbarBrief: View {
             profileTitle: store.menuBarProfileTitle,
             language: store.language
         )
-        let tint = diagnosticTint(brief.severity, palette: palette)
+        let isPlaceholder = store.networkDiagnosticReport.findings.isEmpty
+        let tint = isPlaceholder ? palette.tertiaryText : diagnosticTint(brief.severity, palette: palette)
 
         GlassCard(radius: 16, padding: 0) {
             HStack(spacing: 12) {
-                Image(systemName: brief.symbol)
+                Image(systemName: isPlaceholder ? "stethoscope" : brief.symbol)
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(tint)
                     .frame(width: 30, height: 30)
@@ -178,7 +182,8 @@ private struct DiagnosticsStatusStrip: View {
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
         let report = store.networkDiagnosticReport
-        let tint = diagnosticTint(report.severity, palette: palette)
+        let isPlaceholder = report.findings.isEmpty
+        let tint = isPlaceholder ? palette.tertiaryText : diagnosticTint(report.severity, palette: palette)
 
         HStack(spacing: 8) {
             if store.isRunningNetworkDiagnosis {
@@ -187,8 +192,8 @@ private struct DiagnosticsStatusStrip: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
             }
             StatusChip(
-                text: severityTitle(report.severity, language: store.language),
-                symbol: report.severity.symbol,
+                text: isPlaceholder ? store.text(.notValidated) : severityTitle(report.severity, language: store.language),
+                symbol: isPlaceholder ? "questionmark.circle" : report.severity.symbol,
                 tint: tint
             )
             StatusChip(text: store.networkEgressKind.title(language: store.language), symbol: "globe")
@@ -206,13 +211,13 @@ private struct NetworkDoctorOverviewCard: View {
     var body: some View {
         let palette = GlassPalette(colorScheme: colorScheme)
         let report = store.networkDiagnosticReport
-        let tint = diagnosticTint(report.severity, palette: palette)
         let isPlaceholder = report.findings.isEmpty
+        let tint = isPlaceholder ? palette.tertiaryText : diagnosticTint(report.severity, palette: palette)
 
         GlassCard(radius: 16, padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: report.severity.symbol)
+                    Image(systemName: isPlaceholder ? "stethoscope" : report.severity.symbol)
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(tint)
                         .frame(width: 36, height: 36)
@@ -226,6 +231,18 @@ private struct NetworkDoctorOverviewCard: View {
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(palette.secondaryText)
                             .lineLimit(2)
+                        if let date = store.networkDiagnosticReportDate {
+                            Label {
+                                Text(store.text(.diagnosticSnapshot))
+                                    + Text(" · ")
+                                    + Text(date, format: .dateTime.hour().minute().second().locale(store.language.locale))
+                            } icon: {
+                                Image(systemName: "clock")
+                            }
+                            .font(.system(size: 11, design: .rounded))
+                            .foregroundStyle(palette.tertiaryText)
+                            .lineLimit(1)
+                        }
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: "arrow.turn.down.right")
                                 .font(.system(size: 9, weight: .bold))

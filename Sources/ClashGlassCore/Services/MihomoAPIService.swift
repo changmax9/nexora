@@ -1,15 +1,18 @@
+import CFNetwork
 import Foundation
 
 public enum MihomoAPIEndpoint: Equatable, Sendable {
     case version
     case configs
     case proxies
+    case proxyProviders
     case connections
     case traffic
     case updateConfigs(mode: OutboundMode?, tunEnabled: Bool?)
     case changeProxy(group: String, proxy: String)
     case groupDelay(group: String, url: String, timeout: Int)
     case delayTest(proxy: String, url: String, timeout: Int)
+    case providerDelayTest(provider: String, proxy: String, url: String, timeout: Int)
     case closeConnection(id: String)
     case closeAllConnections
 }
@@ -26,6 +29,8 @@ public struct MihomoAPIRequest: Sendable {
     public func urlRequest(for endpoint: MihomoAPIEndpoint) throws -> URLRequest {
         var request = URLRequest(url: url(for: endpoint))
         request.httpMethod = method(for: endpoint)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = timeout(for: endpoint)
         if let secret, !secret.isEmpty {
             request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
         }
@@ -36,6 +41,23 @@ public struct MihomoAPIRequest: Sendable {
         return request
     }
 
+    private func timeout(for endpoint: MihomoAPIEndpoint) -> TimeInterval {
+        switch endpoint {
+        case .version:
+            return 2
+        case let .groupDelay(_, _, milliseconds),
+             let .delayTest(_, _, milliseconds),
+             let .providerDelayTest(_, _, _, milliseconds):
+            // Give Mihomo enough time to return the configured probe result.
+            return max(5, Double(milliseconds) / 1_000 + 2)
+        case .traffic:
+            // This is an ongoing stream, rather than a controller transaction.
+            return 60
+        default:
+            return 5
+        }
+    }
+
     private func url(for endpoint: MihomoAPIEndpoint) -> URL {
         switch endpoint {
         case .version:
@@ -44,6 +66,8 @@ public struct MihomoAPIRequest: Sendable {
             return baseURL.appendingPathComponent("configs")
         case .proxies:
             return baseURL.appendingPathComponent("proxies")
+        case .proxyProviders:
+            return baseURL.appendingPathComponent("providers/proxies")
         case .connections:
             return baseURL.appendingPathComponent("connections")
         case .traffic:
@@ -81,6 +105,21 @@ public struct MihomoAPIRequest: Sendable {
                 URLQueryItem(name: "timeout", value: "\(timeout)"),
             ]
             return components.url!
+        case let .providerDelayTest(provider, proxy, url, timeout):
+            let providerURL = appendingEncodedPathSegment(
+                provider,
+                to: baseURL.appendingPathComponent("providers/proxies")
+            )
+            let proxyURL = appendingEncodedPathSegment(proxy, to: providerURL)
+            var components = URLComponents(
+                url: proxyURL.appendingPathComponent("healthcheck"),
+                resolvingAgainstBaseURL: false
+            )!
+            components.queryItems = [
+                URLQueryItem(name: "url", value: url),
+                URLQueryItem(name: "timeout", value: "\(timeout)"),
+            ]
+            return components.url!
         case let .closeConnection(id):
             return baseURL.appendingPathComponent("connections").appendingPathComponent(id)
         case .closeAllConnections:
@@ -99,7 +138,8 @@ public struct MihomoAPIRequest: Sendable {
 
     private func method(for endpoint: MihomoAPIEndpoint) -> String {
         switch endpoint {
-        case .version, .configs, .proxies, .connections, .traffic, .groupDelay, .delayTest:
+        case .version, .configs, .proxies, .proxyProviders, .connections, .traffic,
+             .groupDelay, .delayTest, .providerDelayTest:
             "GET"
         case .updateConfigs:
             "PATCH"
@@ -133,10 +173,25 @@ public struct MihomoAPIService: Sendable {
     public let requestBuilder: MihomoAPIRequest
     public let session: URLSession
 
-    public init(requestBuilder: MihomoAPIRequest, session: URLSession = .shared) {
+    public init(requestBuilder: MihomoAPIRequest, session: URLSession? = nil) {
         self.requestBuilder = requestBuilder
-        self.session = session
+        self.session = session ?? Self.controllerSession
     }
+
+    private static let controllerSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 5
+        // Controller requests must keep working when the system proxy points at
+        // a stalled core; routing them through that proxy prevents recovery.
+        configuration.connectionProxyDictionary = [
+            kCFNetworkProxiesHTTPEnable as String: 0,
+            kCFNetworkProxiesHTTPSEnable as String: 0,
+            kCFNetworkProxiesSOCKSEnable as String: 0,
+        ]
+        return URLSession(configuration: configuration)
+    }()
 
     public func data(for endpoint: MihomoAPIEndpoint) async throws -> Data {
         let request = try requestBuilder.urlRequest(for: endpoint)
@@ -172,9 +227,23 @@ public struct MihomoAPIService: Sendable {
     public func proxyDelay(
         proxy: String,
         url: String,
-        timeout: Int = LatencyTestPlan.defaultTimeoutMilliseconds
+        timeout: Int = LatencyTestPlan.defaultTimeoutMilliseconds,
+        provider: String? = nil
     ) async -> Int? {
         do {
+            if let provider {
+                do {
+                    let data = try await data(for: .providerDelayTest(
+                        provider: provider, proxy: proxy, url: url, timeout: timeout
+                    ))
+                    return LatencyTestSettings.validMeasuredDelay(
+                        try MihomoAPIDecoder.delay(from: data)
+                    )
+                } catch let MihomoAPIError.httpStatus(code, _) where code == 404 || code == 405 {
+                    // Older controllers may only expose provider nodes in /proxies.
+                }
+            }
+            try Task.checkCancellation()
             let data = try await data(
                 for: .delayTest(proxy: proxy, url: url, timeout: timeout)
             )
@@ -229,8 +298,20 @@ enum MihomoAPIDecoder {
         )
     }
 
-    static func proxyGroups(from data: Data) throws -> [ProxyGroup] {
+    static func proxyGroups(from data: Data, providerData: Data? = nil) throws -> [ProxyGroup] {
         let response = try JSONDecoder().decode(ProxiesResponse.self, from: data)
+        // Mihomo 1.19.33 no longer includes provider-owned leaf metadata in /proxies.
+        // Provider support remains optional for older controllers and local profiles.
+        let providers = providerData.flatMap {
+            try? JSONDecoder().decode(ProxyProvidersResponse.self, from: $0)
+        }?.providers ?? [:]
+        var providerNodes: [String: (provider: String, proxy: ProxyResponse)] = [:]
+        for providerName in providers.keys.sorted() {
+            for proxy in providers[providerName]?.proxies ?? [] {
+                guard let name = proxy.name, providerNodes[name] == nil else { continue }
+                providerNodes[name] = (providerName, proxy)
+            }
+        }
         return response.proxies
             .filter { _, proxy in proxy.all?.isEmpty == false }
             .keys
@@ -242,7 +323,8 @@ enum MihomoAPIDecoder {
                 let now = proxy.now ?? all.first
                 let nodes = all.map { nodeName in
                     let region = regionCode(from: nodeName)
-                    let latency = response.proxies[nodeName]?
+                    let metadata = response.proxies[nodeName] ?? providerNodes[nodeName]?.proxy
+                    let latency = metadata?
                         .history?
                         .reversed()
                         .compactMap(\.delay)
@@ -253,7 +335,9 @@ enum MihomoAPIDecoder {
                         region: region,
                         latency: latency,
                         isSelected: nodeName == now,
-                        isGroup: response.proxies[nodeName]?.all?.isEmpty == false
+                        isGroup: response.proxies[nodeName]?.all?.isEmpty == false,
+                        providerName: response.proxies[nodeName] == nil
+                            ? providerNodes[nodeName]?.provider : nil
                     )
                 }
                 return ProxyGroup(
@@ -392,7 +476,16 @@ private struct ProxiesResponse: Decodable {
     let proxies: [String: ProxyResponse]
 }
 
+private struct ProxyProvidersResponse: Decodable {
+    let providers: [String: ProxyProviderResponse]
+}
+
+private struct ProxyProviderResponse: Decodable {
+    let proxies: [ProxyResponse]?
+}
+
 private struct ProxyResponse: Decodable {
+    let name: String?
     let type: String?
     let now: String?
     let all: [String]?
@@ -400,6 +493,7 @@ private struct ProxyResponse: Decodable {
     let testURL: String?
 
     enum CodingKeys: String, CodingKey {
+        case name
         case type
         case now
         case all

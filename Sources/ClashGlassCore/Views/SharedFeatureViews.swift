@@ -144,7 +144,8 @@ struct FeaturePage<Content: View>: View {
 }
 
 struct FeatureAction: Identifiable {
-    let id = UUID()
+    // Keep button state alive when labels, progress, or runtime data refresh.
+    let id: String
     let title: String
     let symbol: String
     var isDisabled = false
@@ -220,10 +221,14 @@ struct PillSegment<Value: Hashable & Identifiable>: View where Value.ID == Value
                         }
                 }
                 .buttonStyle(.plain)
-                .scaleEffect(hoveredValue == value ? 1.025 : 1)
+                .scaleEffect(hoveredValue == value && !reduceMotion ? 1.025 : 1)
                 .onHover { hovering in
                     withAnimation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.76)) {
-                        hoveredValue = hovering ? value : nil
+                        if hovering {
+                            hoveredValue = value
+                        } else if hoveredValue == value {
+                            hoveredValue = nil
+                        }
                     }
                 }
             }

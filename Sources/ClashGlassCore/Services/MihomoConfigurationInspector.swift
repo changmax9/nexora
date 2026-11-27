@@ -1,4 +1,5 @@
 import Foundation
+import Yams
 
 public struct MihomoConfigurationSettings: Equatable, Sendable {
     public let httpPort: Int
@@ -18,100 +19,104 @@ public enum MihomoConfigurationInspector {
     }
 
     public static func inspect(yaml: String) throws -> MihomoConfigurationSettings {
-        var mixedPort: Int?
-        var httpPort: Int?
-        var socksPort: Int?
-        var controller = "127.0.0.1:9090"
-        var secret: String?
-        var mode: OutboundMode = .rule
-        var tunEnabled = false
-        var insideTun = false
-        var insideDNS = false
-        var dnsListenHost: String?
-        var dnsListenPort: Int?
-
-        for rawLine in yaml.split(whereSeparator: \.isNewline) {
-            let line = String(rawLine)
-            let indentation = line.prefix { $0 == " " || $0 == "\t" }.count
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else {
-                continue
-            }
-
-            if indentation == 0 {
-                insideTun = trimmed.hasPrefix("tun:")
-                insideDNS = trimmed.hasPrefix("dns:")
-                guard let pair = keyValue(trimmed) else {
-                    continue
-                }
-                switch pair.key {
-                case "mixed-port":
-                    mixedPort = Int(pair.value)
-                case "port":
-                    httpPort = Int(pair.value)
-                case "socks-port":
-                    socksPort = Int(pair.value)
-                case "external-controller":
-                    controller = unquote(pair.value)
-                case "secret":
-                    let value = unquote(pair.value)
-                    secret = value.isEmpty ? nil : value
-                case "mode":
-                    mode = OutboundMode(rawValue: unquote(pair.value).lowercased()) ?? .rule
-                default:
-                    break
-                }
-            } else if insideTun, let pair = keyValue(trimmed), pair.key == "enable" {
-                tunEnabled = ["true", "yes", "on"].contains(unquote(pair.value).lowercased())
-            } else if insideDNS, let pair = keyValue(trimmed), pair.key == "listen" {
-                let listen = hostAndPort(unquote(pair.value))
-                dnsListenHost = listen.host
-                dnsListenPort = listen.port
-            }
+        guard let configuration = try Yams.compose(yaml: yaml), configuration.mapping != nil else {
+            throw MihomoConfigurationInspectionError.invalidMapping
+        }
+        func value(_ key: String) -> Node? { MihomoYAMLValue.value(key, in: configuration) }
+        let mixedPort = try port(value("mixed-port"), field: "mixed-port") ?? 7890
+        let controller = try endpoint(
+            value("external-controller")?.string ?? "127.0.0.1:9090",
+            field: "external-controller",
+            defaultPort: 9090
+        )
+        let secret = value("secret")?.string
+        let dnsListen: (host: String, port: Int?)?
+        if let listen = MihomoYAMLValue.value("listen", in: value("dns"))?.string {
+            dnsListen = try endpoint(listen, field: "dns.listen", defaultPort: nil)
+        } else {
+            dnsListen = nil
         }
 
-        let controllerParts = controller.split(separator: ":", maxSplits: 1).map(String.init)
-        let controllerHost = controllerParts.first ?? "127.0.0.1"
-        let controllerPort = controllerParts.count == 2 ? Int(controllerParts[1]) ?? 9090 : 9090
-        let effectiveMixedPort = mixedPort ?? 7890
-
         return MihomoConfigurationSettings(
-            httpPort: httpPort ?? effectiveMixedPort,
-            socksPort: socksPort ?? effectiveMixedPort,
-            controllerHost: controllerHost,
-            controllerPort: controllerPort,
-            secret: secret,
-            mode: mode,
-            tunEnabled: tunEnabled,
-            dnsListenHost: dnsListenHost,
-            dnsListenPort: dnsListenPort
+            httpPort: try port(value("port"), field: "port") ?? mixedPort,
+            socksPort: try port(value("socks-port"), field: "socks-port") ?? mixedPort,
+            controllerHost: controller.host,
+            controllerPort: controller.port ?? 9090,
+            secret: secret?.isEmpty == false ? secret : nil,
+            mode: OutboundMode(rawValue: value("mode")?.string?.lowercased() ?? "") ?? .rule,
+            tunEnabled: MihomoYAMLValue.value("enable", in: value("tun"))?.bool ?? false,
+            dnsListenHost: dnsListen?.host,
+            dnsListenPort: dnsListen?.port
         )
     }
 
-    private static func keyValue(_ line: String) -> (key: String, value: String)? {
-        guard let separator = line.firstIndex(of: ":") else {
-            return nil
+    private static func port(_ node: Node?, field: String) throws -> Int? {
+        guard let node, node.null == nil else { return nil }
+        guard let value = node.int, (0...65_535).contains(value) else {
+            throw MihomoConfigurationInspectionError.invalidPort(field)
         }
-        let key = line[..<separator].trimmingCharacters(in: .whitespaces)
-        let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
-        return (key, value)
+        // A disabled listener is assigned a private port when materializing the runtime.
+        return value == 0 ? nil : value
     }
 
-    private static func unquote(_ value: String) -> String {
-        guard value.count >= 2,
-              let first = value.first,
-              let last = value.last,
-              (first == "\"" && last == "\"") || (first == "'" && last == "'") else {
-            return value
+    private static func endpoint(
+        _ value: String,
+        field: String,
+        defaultPort: Int?
+    ) throws -> (host: String, port: Int?) {
+        let address = value.isEmpty ? "127.0.0.1" : value
+        let authority = address.hasPrefix(":") && !address.hasPrefix("::")
+            ? "127.0.0.1\(address)" : address
+        guard let components = URLComponents(string: "http://\(authority)"),
+              var host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.path.isEmpty, components.query == nil, components.fragment == nil else {
+            throw MihomoConfigurationInspectionError.invalidEndpoint(field)
         }
-        return String(value.dropFirst().dropLast())
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            host = String(host.dropFirst().dropLast())
+        }
+        let port = components.port ?? defaultPort
+        if let port, !(1...65_535).contains(port) {
+            throw MihomoConfigurationInspectionError.invalidPort(field)
+        }
+        return (host, port)
     }
+}
 
-    private static func hostAndPort(_ value: String) -> (host: String?, port: Int?) {
-        let parts = value.split(separator: ":", maxSplits: 1).map(String.init)
-        guard parts.count == 2 else {
-            return (nil, nil)
+public enum MihomoConfigurationInspectionError: Error, LocalizedError, Equatable {
+    case invalidMapping
+    case invalidPort(String)
+    case invalidEndpoint(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidMapping:
+            "The Mihomo configuration must be a YAML mapping."
+        case let .invalidPort(field):
+            "The '\(field)' port must be between 0 and 65535."
+        case let .invalidEndpoint(field):
+            "The '\(field)' address must contain a valid host and port."
         }
-        return (parts[0], Int(parts[1]))
+    }
+}
+
+/// Node subscripts intentionally expose only explicit keys. Resolve YAML merge
+/// defaults when inspecting settings without flattening or changing stored nodes.
+enum MihomoYAMLValue {
+    static func value(_ key: String, in node: Node?, depth: Int = 0) -> Node? {
+        guard depth < 64, let mapping = node?.mapping else { return nil }
+        if let explicit = mapping[key] { return explicit }
+        for pair in mapping.reversed() where pair.key.tag == Tag(.merge) {
+            if pair.value.mapping != nil {
+                if let inherited = value(key, in: pair.value, depth: depth + 1) { return inherited }
+            } else if let sources = pair.value.sequence {
+                // Earlier mappings in a YAML merge list take precedence.
+                for source in sources {
+                    if let inherited = value(key, in: source, depth: depth + 1) { return inherited }
+                }
+            }
+        }
+        return nil
     }
 }

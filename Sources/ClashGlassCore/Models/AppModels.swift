@@ -320,6 +320,7 @@ struct ProxyNode: Identifiable, Equatable {
     var latency: Int?
     var isSelected: Bool
     var isGroup: Bool = false
+    var providerName: String? = nil
 }
 
 enum ProxyNodeFilter: String, CaseIterable, Identifiable, Sendable {

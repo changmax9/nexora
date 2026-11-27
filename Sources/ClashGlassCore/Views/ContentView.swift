@@ -59,14 +59,6 @@ public struct ContentView: View {
         .task {
             await store.refreshNetworkIdentity()
         }
-        .task(id: store.isCoreRunning || store.isStarted) {
-            guard store.isCoreRunning || store.isStarted else { return }
-            while !Task.isCancelled, store.isCoreRunning || store.isStarted {
-                await store.runtimeTick()
-                do { try await Task.sleep(for: .milliseconds(500)) }
-                catch { return }
-            }
-        }
     }
 }
 
@@ -150,7 +142,7 @@ private struct IconRail: View {
                 if #available(macOS 26, *), !reduceTransparency {
                     Capsule(style: .continuous)
                         .fill(.clear)
-                        .glassEffect(.regular.tint(palette.rose.opacity(0.22)).interactive(), in: .capsule)
+                        .glassEffect(.regular.tint(palette.rose.opacity(0.22)).interactive(!reduceMotion), in: .capsule)
                 }
             }
             .overlay {

@@ -34,6 +34,7 @@ public final class MihomoCoreService {
     private var outputPipe: Pipe?
     private var outputSink: CoreOutputSink?
     private var pidFileURL: URL?
+    private var lifecycleGeneration: UInt64 = 0
     private let privilegedTUN: (any PrivilegedTUNRuntime)?
     var onUnexpectedTermination: (@MainActor (String) -> Void)?
 
@@ -115,6 +116,9 @@ public final class MihomoCoreService {
         runtimeDirectoryURL: URL? = nil,
         useTUN: Bool = false
     ) async {
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        guard !Task.isCancelled else { return }
         guard let coreBinaryURL else {
             status = .missingCoreBinary
             return
@@ -127,7 +131,14 @@ public final class MihomoCoreService {
             return
         }
 
-        let validation = await validateConfig(path: configPath)
+        let validation = await validateConfig(path: configPath, runtimeDirectoryURL: runtimeDirectoryURL)
+        // Validation runs outside the main actor. A stop or newer start may
+        // have superseded this launch while the validator was running.
+        guard generation == lifecycleGeneration else { return }
+        guard !Task.isCancelled else {
+            status = .stopped
+            return
+        }
         guard validation == .success else {
             if case let .failure(message) = validation {
                 status = .failed(message)
@@ -139,7 +150,13 @@ public final class MihomoCoreService {
         recentOutput = ""
         if useTUN, let privilegedTUN {
             do { try await privilegedTUN.start(configuration: Data(contentsOf: URL(fileURLWithPath: configPath))) }
-            catch { status = .failed(error.localizedDescription) }
+            catch {
+                guard generation == lifecycleGeneration else { return }
+                status = .failed(error.localizedDescription)
+            }
+            if generation == lifecycleGeneration, Task.isCancelled {
+                await stop(userInitiated: false)
+            }
             return
         }
         let runtimeDirectoryURL = runtimeDirectoryURL
@@ -181,9 +198,9 @@ public final class MihomoCoreService {
                 guard let self, self.process === process else {
                     return
                 }
+                let message = self.outputSink?.lastMeaningfulLine ?? "Mihomo exited unexpectedly."
                 self.captureOutput()
                 if self.status != .stopped {
-                    let message = self.outputSink?.lastMeaningfulLine ?? "Mihomo exited unexpectedly."
                     self.status = .failed(message)
                     self.onUnexpectedTermination?(message)
                 }
@@ -202,6 +219,11 @@ public final class MihomoCoreService {
                 to: pidFileURL
             )
             try? await Task.sleep(for: .milliseconds(80))
+            guard generation == lifecycleGeneration, self.process === process else { return }
+            if Task.isCancelled {
+                await stop(userInitiated: false)
+                return
+            }
             if !process.isRunning {
                 captureOutput()
                 status = .failed(sink.lastMeaningfulLine ?? "Mihomo exited before its controller became available.")
@@ -223,31 +245,53 @@ public final class MihomoCoreService {
     }
 
     public func stop(userInitiated: Bool) async {
+        lifecycleGeneration &+= 1
         status = .stopped
+        let stoppingProcess = process
         await privilegedTUN?.stop()
-        let processID = process?.processIdentifier
-        if process?.isRunning == true {
-            process?.terminate()
+        if let stoppingProcess {
+            // Cleanup must finish even when the caller cancels the transition.
+            // Wait off the main actor so controller/UI work remains responsive.
+            await Task.detached(priority: .userInitiated) {
+                Self.terminateAndWait(stoppingProcess, gracePeriod: .seconds(2))
+            }.value
         }
-        try? await Task.sleep(for: .milliseconds(40))
+        guard process === stoppingProcess else { return }
         captureOutput()
-        removePIDFile(for: processID)
+        removePIDFile(for: stoppingProcess?.processIdentifier)
         process = nil
     }
 
     public func stopImmediately() {
+        lifecycleGeneration &+= 1
         status = .stopped
         privilegedTUN?.invalidate()
-        let processID = process?.processIdentifier
-        if process?.isRunning == true {
-            process?.terminate()
+        let stoppingProcess = process
+        if let stoppingProcess {
+            // Application termination cannot await an actor task. Allow a brief
+            // graceful exit, then reap the owned child before dropping its PID.
+            Self.terminateAndWait(stoppingProcess, gracePeriod: .milliseconds(250))
         }
         captureOutput()
-        removePIDFile(for: processID)
+        removePIDFile(for: stoppingProcess?.processIdentifier)
         process = nil
     }
 
-    public func validateConfig(path: String) async -> ConfigValidationResult {
+    private nonisolated static func terminateAndWait(_ process: Process, gracePeriod: Duration) {
+        if process.isRunning {
+            process.terminate()
+            let deadline = ContinuousClock.now.advanced(by: gracePeriod)
+            while process.isRunning, ContinuousClock.now < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            if process.isRunning {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+            }
+        }
+        process.waitUntilExit()
+    }
+
+    public func validateConfig(path: String, runtimeDirectoryURL: URL? = nil) async -> ConfigValidationResult {
         if path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return .failure("Config path is empty.")
         }
@@ -263,6 +307,9 @@ public final class MihomoCoreService {
             let output = Pipe()
             process.executableURL = coreBinaryURL
             process.arguments = ["-t", "-f", path]
+            if let runtimeDirectoryURL {
+                process.arguments = ["-t", "-d", runtimeDirectoryURL.path, "-f", path]
+            }
             process.standardOutput = output
             process.standardError = output
             do {
@@ -421,8 +468,28 @@ final class CoreOutputSink: @unchecked Sendable {
     private let lock = NSLock()
     private var tail = CoreOutputTail()
     private var logHandle: FileHandle?
+    private let logURL: URL
+    private let previousLogURL: URL
+    private let maximumFileBytes: Int
+    private var fileBytes = 0
 
-    init(logURL: URL) {
+    init(logURL: URL, maximumFileBytes: Int = 4 * 1_024 * 1_024) {
+        self.logURL = logURL
+        previousLogURL = logURL.appendingPathExtension("previous")
+        self.maximumFileBytes = max(1, maximumFileBytes)
+        // Preserve the bounded end of the previous run, including an older
+        // unbounded log, without reading the entire file into memory.
+        if let previousRun = try? FileHandle(forReadingFrom: logURL) {
+            defer { try? previousRun.close() }
+            if let size = try? previousRun.seekToEnd(), size > 0 {
+                let start = size > UInt64(self.maximumFileBytes)
+                    ? size - UInt64(self.maximumFileBytes) : 0
+                try? previousRun.seek(toOffset: start)
+                if let data = try? previousRun.read(upToCount: self.maximumFileBytes) {
+                    try? data.write(to: previousLogURL, options: .atomic)
+                }
+            }
+        }
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         logHandle = try? FileHandle(forWritingTo: logURL)
     }
@@ -431,7 +498,37 @@ final class CoreOutputSink: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         tail.append(newData)
-        try? logHandle?.write(contentsOf: newData)
+        var offset = newData.startIndex
+        while offset < newData.endIndex, logHandle != nil {
+            if fileBytes == maximumFileBytes {
+                rotateLog()
+            }
+            let end = min(newData.endIndex, offset + maximumFileBytes - fileBytes)
+            do {
+                try logHandle?.write(contentsOf: newData[offset..<end])
+                fileBytes += end - offset
+                offset = end
+            } catch {
+                try? logHandle?.close()
+                logHandle = nil
+            }
+        }
+    }
+
+    private func rotateLog() {
+        try? logHandle?.close()
+        logHandle = nil
+        do {
+            if FileManager.default.fileExists(atPath: previousLogURL.path) {
+                try FileManager.default.removeItem(at: previousLogURL)
+            }
+            try FileManager.default.moveItem(at: logURL, to: previousLogURL)
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            logHandle = try FileHandle(forWritingTo: logURL)
+            fileBytes = 0
+        } catch {
+            // The in-memory tail remains available if disk logging fails.
+        }
     }
 
     var text: String {

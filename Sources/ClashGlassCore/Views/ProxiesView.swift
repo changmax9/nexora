@@ -81,13 +81,14 @@ struct ProxiesView: View {
     private var toolbarActions: [FeatureAction] {
         [
             FeatureAction(
+                id: "refresh",
                 title: store.isLatencyTesting ? store.latencyTestProgress.text : store.text(.refresh),
                 symbol: store.isLatencyTesting ? "hourglass" : "arrow.clockwise",
                 isDisabled: store.isLatencyTesting
             ) {
                 Task { await store.refreshProxiesAndLatency() }
             },
-            FeatureAction(title: store.text(.settings), symbol: "slider.horizontal.3") {
+            FeatureAction(id: "settings", title: store.text(.settings), symbol: "slider.horizontal.3") {
                 store.selectedSection = .settings
             },
         ]

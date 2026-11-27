@@ -378,6 +378,9 @@ import Testing
     let sourceURL = directory.appendingPathComponent("config.yaml")
     let executableURL = directory.appendingPathComponent("fake-mihomo")
     let geoDataURL = directory.appendingPathComponent("GeoData", isDirectory: true)
+    let defaultsIdentifier = "NexoraLatencyDefaults-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: defaultsIdentifier))
+    defer { defaults.removePersistentDomain(forName: defaultsIdentifier) }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: geoDataURL, withIntermediateDirectories: true)
     try Data("geoip fixture".utf8).write(to: geoDataURL.appendingPathComponent("geoip.dat"))
@@ -394,7 +397,7 @@ import Testing
     if [ "$1" = "-t" ]; then
       exit 0
     fi
-    sleep 5
+    exec /bin/sleep 30
     """.write(to: executableURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
 
@@ -403,8 +406,9 @@ import Testing
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [RecordingURLProtocol.self]
     let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
     let store = AppStore(
-        coreService: MihomoCoreService(coreBinaryURL: executableURL),
+        coreService: MihomoCoreService(coreBinaryURL: executableURL, privilegedTUN: nil),
         apiService: MihomoAPIService(
             requestBuilder: MihomoAPIRequest(baseURL: URL(string: "http://127.0.0.1:9090")!),
             session: session
@@ -416,8 +420,11 @@ import Testing
                 isTCPPortAvailable: { _, _ in true },
                 isUDPPortAvailable: { _, _ in true }
             )
-        )
+        ),
+        userDefaults: defaults,
+        automaticallyMonitorsRuntime: false
     )
+    defer { store.shutdownForApplicationTermination() }
     store.configPath = sourceURL.path
     store.latencyTestURL = "https://cp.cloudflare.com/generate_204"
     store.latencyTestTimeoutMilliseconds = 2_500
@@ -701,12 +708,56 @@ import Testing
 }
 
 @MainActor
-@Test func appStoreRestoresProxySelectionWhenRemoteChangeFails() async {
+@Test func appStoreRestoresProxySelectionWhenRemoteChangeFails() async throws {
+    let identifier = "NexoraRejectedProxySelection-\(UUID().uuidString)"
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(identifier)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let defaults = try #require(UserDefaults(suiteName: identifier))
+    defer { defaults.removePersistentDomain(forName: identifier) }
+    let sourceURL = directory.appendingPathComponent("config.yaml")
+    let executableURL = directory.appendingPathComponent("fake-mihomo")
+    try Data("geoip fixture".utf8).write(to: directory.appendingPathComponent("geoip.dat"))
+    try Data("geosite fixture".utf8).write(to: directory.appendingPathComponent("geosite.dat"))
+    try """
+    mixed-port: 41790
+    external-controller: 127.0.0.1:41990
+    proxies: []
+    rules:
+      - MATCH,DIRECT
+    """.write(to: sourceURL, atomically: true, encoding: .utf8)
+    try """
+    #!/bin/sh
+    if [ "$1" = "-t" ]; then
+      exit 0
+    fi
+    exec /bin/sleep 30
+    """.write(to: executableURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [RejectedProxySelectionURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let repository = ManagedProfileRepository(rootURL: directory.appendingPathComponent("Managed"))
     let store = AppStore(
+        coreService: MihomoCoreService(coreBinaryURL: executableURL, privilegedTUN: nil),
         apiService: MihomoAPIService(
-            requestBuilder: MihomoAPIRequest(baseURL: URL(string: "http://127.0.0.1:1")!)
-        )
+            requestBuilder: MihomoAPIRequest(baseURL: URL(string: "http://127.0.0.1:41990")!),
+            session: session
+        ),
+        profileRepository: repository,
+        runtimeConfigurationPreparer: RuntimeConfigurationPreparer(
+            geoDataSourceURL: directory,
+            portAllocator: RuntimePortAllocator(
+                isTCPPortAvailable: { _, _ in true },
+                isUDPPortAvailable: { _, _ in true }
+            )
+        ),
+        userDefaults: defaults,
+        automaticallyMonitorsRuntime: false
     )
+    defer { store.shutdownForApplicationTermination() }
+    store.configPath = sourceURL.path
     store.proxyGroups = [testProxyGroup()]
 
     await store.selectProxyRemote(groupName: "GLOBAL", nodeName: "Tokyo 02")
@@ -714,7 +765,35 @@ import Testing
     let global = store.proxyGroups.first { $0.name == "GLOBAL" }
     #expect(global?.nodes.first { $0.name == "Hong Kong 01" }?.isSelected == true)
     #expect(global?.nodes.first { $0.name == "Tokyo 02" }?.isSelected == false)
-    #expect(store.lastErrorMessage != nil)
+    #expect(store.lastErrorMessage?.contains("fixture: selected proxy unavailable") == true)
+    #expect(store.configPath == repository.runtimeConfigURL.path)
+}
+
+private final class RejectedProxySelectionURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let isHealthCheck = request.httpMethod == "GET" && url.path == "/version"
+        let isProxyChange = request.httpMethod == "PUT" && url.path == "/proxies/GLOBAL"
+        let statusCode = isHealthCheck ? 200 : (isProxyChange ? 503 : 404)
+        let data = Data((isHealthCheck
+            ? #"{"version":"fixture"}"#
+            : (isProxyChange ? "fixture: selected proxy unavailable" : "fixture: unexpected endpoint")).utf8)
+        guard let response = HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private func testProxyGroup() -> ProxyGroup {

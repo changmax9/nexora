@@ -5,6 +5,7 @@ public struct MenuBarPanelView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var searchText = ""
+    @State private var isSearchEditing = false
     @State private var isRefreshingNodes = false
 
     public init(store: AppStore) {
@@ -46,6 +47,9 @@ public struct MenuBarPanelView: View {
         .environment(\.clashGlassReduceMotion, AppMotionPolicy.reducesMotion(
             systemPreference: accessibilityReduceMotion, appPreference: store.reduceMotion
         ))
+        .onChange(of: store.selectedManagedProfileID) {
+            searchText = ""
+        }
     }
 
     private var connectionTitle: String {
@@ -171,11 +175,34 @@ public struct MenuBarPanelView: View {
             }
             .frame(height: MenuBarQuickAccessPolicy.nodeHeaderHeight)
 
-            MenuBarSearchField(placeholder: store.text(.search), text: $searchText)
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(palette.secondaryText)
+                    .accessibilityHidden(true)
+                MenuBarSearchField(placeholder: store.text(.search), text: $searchText) {
+                    isSearchEditing = $0
+                }
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(palette.secondaryText)
+                            .frame(width: 18, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(store.text(.clearSearch))
+                }
+            }
                 .font(.system(size: 12))
                 .padding(.horizontal, 9)
                 .frame(height: MenuBarQuickAccessPolicy.searchHeight)
                 .background { TileGlassBackground(radius: 8) }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(isSearchEditing ? 0.65 : 0), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
 
             ScrollViewReader { scrollProxy in
                 ScrollView(.vertical) {
