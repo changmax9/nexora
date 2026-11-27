@@ -46,15 +46,15 @@ public struct ContentView: View {
         .alert(
             "Nexora",
             isPresented: Binding(
-                get: { store.lastErrorMessage != nil },
-                set: { if !$0 { store.lastErrorMessage = nil } }
+                get: { store.errorAlertMessage != nil },
+                set: { if !$0 { store.dismissErrorAlert() } }
             )
         ) {
             Button(store.text(.ok)) {
-                store.lastErrorMessage = nil
+                store.dismissErrorAlert()
             }
         } message: {
-            Text(store.lastErrorMessage ?? "")
+            Text(store.errorAlertMessage ?? "")
         }
         .task {
             await store.refreshNetworkIdentity()

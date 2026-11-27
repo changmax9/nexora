@@ -7,6 +7,56 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RuntimeLifecycleRegressionTests {
+    @Test func failedDisconnectPreservesTheCoreUntilProxyRestorationCanBeRetried() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(restoreFailuresRemaining: 1)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        let pid = try fixture.corePID()
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.isSystemProxyEnabled)
+        #expect(fixture.core.isProcessRunning)
+        #expect(try fixture.corePID() == pid)
+        #expect(fixture.store.systemProxyErrorMessage != nil)
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isSystemProxyEnabled)
+        #expect(fixture.store.systemProxyErrorMessage == nil)
+    }
+
+    @Test func unverifiedProxyRestorationKeepsTheCoreAlive() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(ignoresProxyRestore: true)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.core.isProcessRunning)
+        #expect(fixture.store.isSystemProxyEnabled)
+        #expect(fixture.store.systemProxyErrorMessage?.contains("were not restored") == true)
+    }
+
+    @Test func quitIsCancelledWhenSystemProxyRestorationFails() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(restoreFailuresRemaining: 1)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+
+        #expect(!fixture.store.shutdownForApplicationTermination())
+        #expect(fixture.core.isProcessRunning)
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.systemProxyErrorMessage != nil)
+
+        #expect(fixture.store.shutdownForApplicationTermination())
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isStarted)
+    }
+
     @Test func endedTrafficStreamsWaitBeforeReconnecting() async throws {
         let fixture = try await RuntimeLifecycleFixture.make()
         defer { fixture.cleanup() }
@@ -467,7 +517,13 @@ private struct RuntimeLifecycleFixture {
         socks: .init(enabled: false, host: "previous-proxy", port: 8888)
     )
 
-    static func make(occupyPreferredPorts: Bool = false, privilegedTUN: (any PrivilegedTUNRuntime)? = nil) async throws -> RuntimeLifecycleFixture {
+    static func make(
+        occupyPreferredPorts: Bool = false,
+        privilegedTUN: (any PrivilegedTUNRuntime)? = nil,
+        captureFails: Bool = false,
+        restoreFailuresRemaining: Int = 0,
+        ignoresProxyRestore: Bool = false
+    ) async throws -> RuntimeLifecycleFixture {
         let identifier = UUID().uuidString
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(identifier)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -517,6 +573,8 @@ private struct RuntimeLifecycleFixture {
         let core = MihomoCoreService(coreBinaryURL: executable, privilegedTUN: privilegedTUN)
         let defaults = try #require(UserDefaults(suiteName: identifier))
         let previousProxy = previousProxy
+        let currentProxy = Mutex(previousProxy)
+        let restoreFailures = Mutex(restoreFailuresRemaining)
         let store = AppStore(
             coreService: core,
             apiService: MihomoAPIService(
@@ -524,8 +582,38 @@ private struct RuntimeLifecycleFixture {
                 session: session
             ),
             systemProxyService: SystemProxyService(
-                capture: { _ in previousProxy },
-                apply: { command in controller.state.withLock { $0.proxyCommands.append(command) } }
+                capture: { _ in
+                    if captureFails {
+                        throw NSError(
+                            domain: "NexoraRuntimeLifecycleFixture", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "fixture: proxy capture unavailable"]
+                        )
+                    }
+                    return currentProxy.withLock { $0 }
+                },
+                apply: { command in
+                    controller.state.withLock { $0.proxyCommands.append(command) }
+                    if command.continuesAfterFailure {
+                        if restoreFailures.withLock({ remaining in
+                            guard remaining > 0 else { return false }
+                            remaining -= 1
+                            return true
+                        }) {
+                            throw SystemProxyError.commandFailed(["fixture: restore failed"])
+                        }
+                        if !ignoresProxyRestore { currentProxy.withLock { $0 = previousProxy } }
+                    } else {
+                        let web = command.steps[0].arguments
+                        let socks = command.steps[2].arguments
+                        currentProxy.withLock {
+                            $0 = SystemProxySnapshot(
+                                web: .init(enabled: true, host: web[2], port: Int(web[3])!),
+                                secureWeb: .init(enabled: true, host: web[2], port: Int(web[3])!),
+                                socks: .init(enabled: true, host: socks[2], port: Int(socks[3])!)
+                            )
+                        }
+                    }
+                }
             ),
             profileRepository: repository,
             runtimeConfigurationPreparer: RuntimeConfigurationPreparer(
@@ -627,6 +715,7 @@ private struct RuntimeLifecycleFixture {
 
     func cleanup() {
         store.shutdownForApplicationTermination()
+        core.stopImmediately()
         session.invalidateAndCancel()
         _ = RuntimeLifecycleURLProtocol.fixtures.withLock { $0.removeValue(forKey: identifier) }
         defaults.removePersistentDomain(forName: identifier)
