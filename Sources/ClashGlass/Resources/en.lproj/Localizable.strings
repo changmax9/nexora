@@ -1,0 +1,26 @@
+/* Nexora Siri and Shortcuts localization. */
+"Connect Nexora" = "Connect Nexora";
+"Start the connection using the selected Nexora configuration." = "Start the connection using the selected Nexora configuration.";
+"Nexora is connected." = "Nexora is connected.";
+"Disconnect Nexora" = "Disconnect Nexora";
+"Stop the Nexora connection and restore the previous system proxy settings." = "Stop the Nexora connection and restore the previous system proxy settings.";
+"Nexora is disconnected." = "Nexora is disconnected.";
+"Enable Nexora TUN" = "Enable Nexora TUN";
+"Enable Nexora TUN. macOS may request administrator approval the first time." = "Enable Nexora TUN. macOS may request administrator approval the first time.";
+"Nexora TUN is enabled." = "Nexora TUN is enabled.";
+"Nexora TUN will be enabled the next time you connect." = "Nexora TUN will be enabled the next time you connect.";
+"Disable Nexora TUN" = "Disable Nexora TUN";
+"Disable Nexora TUN while keeping an active Nexora connection in system proxy mode." = "Disable Nexora TUN while keeping an active Nexora connection in system proxy mode.";
+"Nexora TUN is disabled." = "Nexora TUN is disabled.";
+"Proxy Node" = "Proxy Node";
+"Select Nexora Proxy Node" = "Select Nexora Proxy Node";
+"Select a node in the current Nexora configuration. This does not start a VPN connection." = "Select a node in the current Nexora configuration. This does not start a VPN connection.";
+"Which Nexora proxy node would you like to use?" = "Which Nexora proxy node would you like to use?";
+"Which proxy group should use this node?" = "Which proxy group should use this node?";
+"Select ${node}" = "Select ${node}";
+"Nexora selected %@ in %@." = "Nexora selected %@ in %@.";
+"Connect" = "Connect";
+"Disconnect" = "Disconnect";
+"Enable TUN" = "Enable TUN";
+"Disable TUN" = "Disable TUN";
+"Select Node" = "Select Node";

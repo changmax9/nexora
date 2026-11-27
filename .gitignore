@@ -19,3 +19,6 @@ docs/macos-27-validation.md
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
+*.dia
+docs/audits/
+DESIGN.md

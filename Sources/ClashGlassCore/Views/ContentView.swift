@@ -46,26 +46,18 @@ public struct ContentView: View {
         .alert(
             "Nexora",
             isPresented: Binding(
-                get: { store.lastErrorMessage != nil },
-                set: { if !$0 { store.lastErrorMessage = nil } }
+                get: { store.errorAlertMessage != nil },
+                set: { if !$0 { store.dismissErrorAlert() } }
             )
         ) {
             Button(store.text(.ok)) {
-                store.lastErrorMessage = nil
+                store.dismissErrorAlert()
             }
         } message: {
-            Text(store.lastErrorMessage ?? "")
+            Text(store.errorAlertMessage ?? "")
         }
         .task {
             await store.refreshNetworkIdentity()
-        }
-        .task(id: store.isCoreRunning || store.isStarted) {
-            guard store.isCoreRunning || store.isStarted else { return }
-            while !Task.isCancelled, store.isCoreRunning || store.isStarted {
-                await store.runtimeTick()
-                do { try await Task.sleep(for: .milliseconds(500)) }
-                catch { return }
-            }
         }
     }
 }
@@ -150,7 +142,7 @@ private struct IconRail: View {
                 if #available(macOS 26, *), !reduceTransparency {
                     Capsule(style: .continuous)
                         .fill(.clear)
-                        .glassEffect(.regular.tint(palette.rose.opacity(0.22)).interactive(), in: .capsule)
+                        .glassEffect(.regular.tint(palette.rose.opacity(0.22)).interactive(!reduceMotion), in: .capsule)
                 }
             }
             .overlay {

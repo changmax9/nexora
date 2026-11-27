@@ -163,18 +163,22 @@ struct LatencyGroupTest: Equatable, Sendable {
     let groupName: String
     let url: String
     let nodeNames: Set<String>
+    var providersByNodeName: [String: String] = [:]
 
     func fallbackTests(excluding measuredNodeNames: Set<String>) -> [LatencyProxyTest] {
         nodeNames
             .subtracting(measuredNodeNames)
             .sorted()
-            .map { LatencyProxyTest(proxyName: $0, url: url) }
+            .map {
+                LatencyProxyTest(proxyName: $0, url: url, providerName: providersByNodeName[$0])
+            }
     }
 }
 
 struct LatencyProxyTest: Equatable, Sendable {
     let proxyName: String
     let url: String
+    var providerName: String? = nil
 }
 
 struct LatencyTestBatchPlan: Equatable, Sendable {
@@ -204,6 +208,12 @@ enum LatencyTestPlanner {
                         group.nodes
                             .filter(isLatencyTestable)
                             .map(\.name)
+                    ),
+                    providersByNodeName: Dictionary(
+                        group.nodes.compactMap { node in
+                            node.providerName.map { (node.name, $0) }
+                        },
+                        uniquingKeysWith: { current, _ in current }
                     )
                 )
             }
@@ -238,7 +248,10 @@ enum LatencyTestPlanner {
                         nodeName: nodeName,
                         groups: groups,
                         settings: settings
-                    )
+                    ),
+                    providerName: groups.lazy.flatMap(\.nodes)
+                        .first(where: { $0.name == nodeName && $0.providerName != nil })?
+                        .providerName
                 )
             }
         return LatencyTestBatchPlan(

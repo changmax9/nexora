@@ -1,4 +1,5 @@
 import Foundation
+import Yams
 
 public enum RoutingPolicy: String, Codable, CaseIterable, Identifiable, Sendable {
     case vpn
@@ -84,71 +85,15 @@ enum RoutingInputNormalizer {
 
 enum RoutingVPNTargetResolver {
     static func target(from yaml: String) -> String? {
-        let lines = yaml.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        var insideGroups = false
-        var currentName: String?
-        var currentType: String?
-        var selectors: [String] = []
-
-        func appendCurrentSelector() {
-            guard let currentName,
-                  currentType?.lowercased() == "select",
-                  !selectors.contains(currentName) else {
-                return
-            }
-            selectors.append(currentName)
-        }
-
-        for line in lines {
-            let indentation = line.prefix { $0 == " " || $0 == "\t" }.count
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if indentation == 0 {
-                if insideGroups, trimmed != "proxy-groups:" {
-                    appendCurrentSelector()
-                    break
-                }
-                insideGroups = trimmed == "proxy-groups:"
-                continue
-            }
-            guard insideGroups, !trimmed.isEmpty, !trimmed.hasPrefix("#") else {
-                continue
-            }
-            if trimmed.hasPrefix("-") {
-                appendCurrentSelector()
-                currentName = mappingValue(for: "name", in: trimmed)
-                currentType = mappingValue(for: "type", in: trimmed)
-            } else {
-                currentName = currentName ?? mappingValue(for: "name", in: trimmed)
-                currentType = currentType ?? mappingValue(for: "type", in: trimmed)
-            }
-        }
-        if insideGroups {
-            appendCurrentSelector()
-        }
-        return selectors.first
-    }
-
-    private static func mappingValue(for key: String, in line: String) -> String? {
-        guard let keyRange = line.range(of: "\(key):") else {
+        guard let configuration = try? Yams.compose(yaml: yaml),
+              let groups = MihomoYAMLValue.value("proxy-groups", in: configuration)?.sequence else {
             return nil
         }
-        var value = line[keyRange.upperBound...]
-            .trimmingCharacters(in: .whitespaces)
-        guard !value.isEmpty else {
-            return nil
+        let selector = groups.first { group in
+            MihomoYAMLValue.value("type", in: group)?.string?.lowercased() == "select"
+                && MihomoYAMLValue.value("name", in: group)?.string?.isEmpty == false
         }
-        if let quote = value.first, quote == "'" || quote == "\"" {
-            value.removeFirst()
-            guard let end = value.firstIndex(of: quote) else {
-                return nil
-            }
-            return String(value[..<end])
-        }
-        let end = value.firstIndex(where: { $0 == "," || $0 == "}" })
-            ?? value.endIndex
-        let result = value[..<end].trimmingCharacters(in: .whitespaces)
-        return result.isEmpty ? nil : result
+        return MihomoYAMLValue.value("name", in: selector)?.string
     }
 }
 

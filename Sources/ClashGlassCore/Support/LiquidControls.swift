@@ -403,7 +403,7 @@ private struct LiquidGlassButtonBody<Label: View>: View {
             if #available(macOS 26.0, *) {
                 if #available(macOS 27.0, *) {
                     label
-                        .glassEffect(.regular.tint(tint).interactive(), in: .rect(cornerRadius: radius))
+                        .glassEffect(.regular.tint(tint).interactive(!reduceMotion), in: .rect(cornerRadius: radius))
                 } else {
                     label
                         .glassEffect(.regular.tint(tint), in: .rect(cornerRadius: radius))

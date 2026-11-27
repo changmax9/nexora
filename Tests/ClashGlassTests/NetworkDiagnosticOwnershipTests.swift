@@ -38,7 +38,8 @@ func networkDoctorDoesNotTrustAnotherMihomoProcess(isStarted: Bool) {
 }
 
 @MainActor
-@Test func simultaneousNetworkDiagnosesDoNotRunDuplicateProbes() async throws {
+@Test(arguments: [false, true])
+func simultaneousNetworkDiagnosesDoNotPublishStaleOrDuplicateProbes(changeRouteDuringProbe: Bool) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -70,10 +71,29 @@ func networkDoctorDoesNotTrustAnotherMihomoProcess(isStarted: Bool) {
     #expect(store.isRunningNetworkDiagnosis)
     await store.runNetworkDiagnosis()
     #expect(store.isRunningNetworkDiagnosis)
+    if changeRouteDuringProbe {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while calls.withLock({ $0 }) == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(calls.withLock { $0 } == 1)
+        store.selectedMode = .global
+    }
     await first.value
     #expect(!store.isRunningNetworkDiagnosis)
     #expect(calls.withLock { $0 } == 1)
-    #expect(store.networkDiagnosticReport.severity == .healthy)
+    if changeRouteDuringProbe {
+        #expect(store.networkDiagnosticReport == .placeholder)
+        #expect(store.networkDiagnosticReportDate == nil)
+        #expect(store.networkPortChecks.isEmpty)
+    } else {
+        #expect(store.networkDiagnosticReport.severity == .healthy)
+        #expect(store.networkDiagnosticReportDate != nil)
+        store.externalIP = "Unavailable"
+        #expect(store.networkDiagnosticReport == .placeholder)
+        #expect(store.networkDiagnosticReportDate == nil)
+        #expect(store.networkPortChecks.isEmpty)
+    }
 }
 
 private func ownershipSnapshot(isStarted: Bool, checks: [NetworkPortCheck]) -> NetworkDiagnosticSnapshot {

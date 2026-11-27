@@ -7,6 +7,405 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct RuntimeLifecycleRegressionTests {
+    @Test func failedDisconnectPreservesTheCoreUntilProxyRestorationCanBeRetried() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(restoreFailuresRemaining: 1)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        let pid = try fixture.corePID()
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.isSystemProxyEnabled)
+        #expect(fixture.core.isProcessRunning)
+        #expect(try fixture.corePID() == pid)
+        #expect(fixture.store.systemProxyErrorMessage != nil)
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isSystemProxyEnabled)
+        #expect(fixture.store.systemProxyErrorMessage == nil)
+    }
+
+    @Test func unverifiedProxyRestorationKeepsTheCoreAlive() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(ignoresProxyRestore: true)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.core.isProcessRunning)
+        #expect(fixture.store.isSystemProxyEnabled)
+        #expect(fixture.store.systemProxyErrorMessage?.contains("were not restored") == true)
+    }
+
+    @Test func quitIsCancelledWhenSystemProxyRestorationFails() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(restoreFailuresRemaining: 1)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+
+        #expect(!fixture.store.shutdownForApplicationTermination())
+        #expect(fixture.core.isProcessRunning)
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.systemProxyErrorMessage != nil)
+
+        #expect(fixture.store.shutdownForApplicationTermination())
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isStarted)
+    }
+
+    @Test func automationDisconnectReportsCleanupFailureAndKeepsTheConnection() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(restoreFailuresRemaining: 1)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+
+        await #expect(throws: AutomationControlError.self) {
+            try await fixture.store.setConnectionEnabledForAutomation(false)
+        }
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.core.isProcessRunning)
+        #expect(fixture.store.systemProxyErrorMessage != nil)
+    }
+
+    @Test func automationConnectionRequestsAreIdempotent() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+
+        try await fixture.store.setConnectionEnabledForAutomation(true)
+        let pid = try fixture.corePID()
+        let commandsAfterStart = fixture.proxyCommands
+        try await fixture.store.setConnectionEnabledForAutomation(true)
+
+        #expect(try fixture.corePID() == pid)
+        #expect(try fixture.validationCount() == 1)
+        #expect(fixture.proxyCommands == commandsAfterStart)
+        #expect(fixture.store.isStarted)
+
+        try await fixture.store.setConnectionEnabledForAutomation(false)
+        let commandsAfterStop = fixture.proxyCommands
+        try await fixture.store.setConnectionEnabledForAutomation(false)
+
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isSystemProxyEnabled)
+        #expect(fixture.proxyCommands == commandsAfterStop)
+    }
+
+    @Test func automationConnectRestoresProxyWhenTheRunningRuntimeHasNoTrafficRoute() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        let pid = try fixture.corePID()
+        await fixture.store.applySystemProxy(enabled: false)
+        try #require(fixture.store.isStarted)
+        try #require(!fixture.store.isSystemProxyEnabled)
+        try #require(!fixture.store.isTunEnabled)
+
+        try await fixture.store.setConnectionEnabledForAutomation(true)
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.isSystemProxyEnabled)
+        #expect(try fixture.corePID() == pid)
+        #expect(try fixture.validationCount() == 1)
+        #expect(fixture.proxyCommands.count == 3)
+        #expect(fixture.proxyCommands.last == .enable(
+            service: "Wi-Fi", host: "127.0.0.1", httpPort: 41790, socksPort: 41790
+        ))
+    }
+
+    @Test func automationQueuedConnectionRequestsDoNotLoseTheFinalDisconnect() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try Data().write(to: fixture.directory.appendingPathComponent("delay-start"))
+        let first = Task { try await fixture.store.setConnectionEnabledForAutomation(true) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !fixture.store.isRuntimeTransitioning, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        try #require(fixture.store.isRuntimeTransitioning)
+        var secondHasStarted = false
+        let second = Task {
+            secondHasStarted = true
+            try await fixture.store.setConnectionEnabledForAutomation(true)
+        }
+        while !secondHasStarted { await Task.yield() }
+        let disconnect = Task { try await fixture.store.setConnectionEnabledForAutomation(false) }
+        try await first.value
+        try await second.value
+        try await disconnect.value
+
+        #expect(try fixture.validationCount() == 1)
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isRuntimeTransitioning)
+        #expect(fixture.proxyCommands.count == 2)
+        #expect(fixture.proxyCommands.last == .restore(service: "Wi-Fi", snapshot: RuntimeLifecycleFixture.previousProxy))
+    }
+
+    @Test func automationConnectionFailureThrowsInsteadOfReportingSuccess() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(captureFails: true)
+        defer { fixture.cleanup() }
+        do {
+            try await fixture.store.setConnectionEnabledForAutomation(true)
+            Issue.record("A failed system proxy capture must fail the automation action.")
+        } catch {
+            #expect(error.localizedDescription.contains("fixture: proxy capture unavailable"))
+        }
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
+    @Test func automationTUNApprovalFailureKeepsTheExistingConnection() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        let pid = try fixture.corePID()
+        helper.rejectAuthorization = true
+
+        do {
+            try await fixture.store.setTUNEnabledForAutomation(true)
+            Issue.record("Denied TUN authorization must fail the automation action.")
+        } catch {
+            #expect(error.localizedDescription.contains("approval required"))
+        }
+        #expect(fixture.store.isStarted)
+        #expect(!fixture.store.isTunEnabled)
+        #expect(try fixture.corePID() == pid)
+        #expect(helper.startCount == 0)
+    }
+
+    @Test func automationTUNWhileDisconnectedOnlyStagesTheNextStartSetting() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        helper.rejectAuthorization = true
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+
+        try await fixture.store.setTUNEnabledForAutomation(true)
+        #expect(fixture.store.isTunEnabled)
+        #expect(fixture.store.stagedTunEnabled == true)
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(helper.startCount == 0)
+        #expect(fixture.proxyCommands.isEmpty)
+
+        try await fixture.store.setTUNEnabledForAutomation(false)
+        #expect(!fixture.store.isTunEnabled)
+        #expect(fixture.store.stagedTunEnabled == false)
+    }
+
+    @Test func automationDisablingTUNStopsAControllerOnlyPrivilegedCore() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        try await fixture.store.setTUNEnabledForAutomation(true)
+        try await fixture.startController()
+        try #require(!fixture.store.isStarted)
+        try #require(fixture.core.isPrivilegedRunning)
+        try #require(helper.isRunning)
+        let proxyCommands = fixture.proxyCommands
+
+        try await fixture.store.setTUNEnabledForAutomation(false)
+
+        #expect(!fixture.core.isPrivilegedRunning)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!helper.isRunning)
+        #expect(!fixture.store.isCoreRunning)
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.store.isTunEnabled)
+        #expect(fixture.store.stagedTunEnabled == false)
+        #expect(fixture.proxyCommands == proxyCommands)
+    }
+
+    @Test func automationNodeQueryDoesNotLaunchOrAuthorizeAStoppedRuntime() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        helper.rejectAuthorization = true
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        fixture.store.isTunEnabled = true
+
+        _ = try await fixture.store.automationProxyNodes()
+
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.core.isProcessRunning)
+        #expect(helper.startCount == 0)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
+    @Test func automationNodeQueriesRejectIdentifiersFromAnotherProfile() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.usesProfileProxySnapshots = true }
+        try await fixture.startController()
+        let nodes = try await fixture.store.automationProxyNodes()
+        let original = try #require(nodes.first { $0.name == "A Node" })
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+
+        await fixture.store.selectManagedProfile(fixture.profileB.id)
+        let replacement = try await fixture.store.automationProxyNodes()
+        #expect(replacement.contains { $0.name == "B Node" })
+        #expect(!replacement.contains { $0.id == original.id })
+        let pid = try fixture.corePID()
+        do {
+            try await fixture.store.selectProxyForAutomation(id: original.id)
+            Issue.record("A node identifier from a different profile must be rejected.")
+        } catch {
+            #expect(!error.localizedDescription.isEmpty)
+        }
+        #expect(try fixture.corePID() == pid)
+        #expect(fixture.store.selectedManagedProfileID == fixture.profileB.id)
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
+    @Test func automationNodeSelectionChangesTheControllerWithoutEnablingVPN() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.selectedProxy = "Alpha" }
+        try await fixture.startController()
+        let nodes = try await fixture.store.automationProxyNodes()
+        let beta = try #require(nodes.first { $0.name == "Beta" })
+
+        try await fixture.store.selectProxyForAutomation(id: beta.id)
+
+        #expect(fixture.controller.state.withLock { $0.selectedProxy } == "Beta")
+        #expect(fixture.store.menuBarSelectedNodeName == "Beta")
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
+    @Test func automationNodeSelectionRejectsAnUnappliedSuccessfulControllerResponse() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.selectedProxy = "Alpha" }
+        try await fixture.startController()
+        let nodes = try await fixture.store.automationProxyNodes()
+        let beta = try #require(nodes.first { $0.name == "Beta" })
+        fixture.controller.state.withLock { $0.ignoreProxySelection = true }
+
+        do {
+            try await fixture.store.selectProxyForAutomation(id: beta.id)
+            Issue.record("HTTP 204 without applying the selected node must fail the automation action.")
+        } catch {
+            #expect(!error.localizedDescription.isEmpty)
+        }
+
+        #expect(fixture.controller.state.withLock { $0.selectedProxy } == "Alpha")
+        #expect(fixture.store.menuBarSelectedNodeName == "Alpha")
+        #expect(!fixture.store.isStarted)
+        #expect(fixture.proxyCommands.isEmpty)
+    }
+
+    @Test func automationNodeSelectionCannotActivateAStagedTUNConnection() async throws {
+        let helper = FakePrivilegedTUNRuntime()
+        let fixture = try await RuntimeLifecycleFixture.make(privilegedTUN: helper)
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.selectedProxy = "Alpha" }
+        try await fixture.startController()
+        let nodes = try await fixture.store.automationProxyNodes()
+        let beta = try #require(nodes.first { $0.name == "Beta" })
+        let pid = try fixture.corePID()
+        try await fixture.store.setTUNEnabledForAutomation(true)
+        try #require(fixture.store.stagedTunEnabled == true)
+        let proxyCommands = fixture.proxyCommands
+
+        do {
+            try await fixture.store.selectProxyForAutomation(id: beta.id)
+            Issue.record("Changing a node must not start the staged privileged TUN connection.")
+        } catch {
+            #expect(!error.localizedDescription.isEmpty)
+        }
+
+        #expect(try fixture.corePID() == pid)
+        #expect(!fixture.core.isPrivilegedRunning)
+        #expect(helper.startCount == 0)
+        #expect(fixture.store.isTunEnabled)
+        #expect(fixture.store.stagedTunEnabled == true)
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.store.isSystemProxyEnabled)
+        #expect(fixture.proxyCommands == proxyCommands)
+        #expect(fixture.controller.state.withLock { $0.selectedProxy } == "Alpha")
+    }
+
+    @Test func automationNodeCatalogSurvivesRelaunchWithoutStartingTheCore() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        fixture.controller.state.withLock { $0.selectedProxy = "Alpha" }
+        try await fixture.startController()
+        let original = try await fixture.store.automationProxyNodes()
+        try #require(!original.isEmpty)
+        await fixture.store.shutdownRuntime()
+        let commandsBeforeQuery = fixture.proxyCommands
+        let relaunched = AppStore(
+            coreService: MihomoCoreService(coreBinaryURL: nil, privilegedTUN: nil),
+            profileRepository: fixture.repository,
+            userDefaults: fixture.defaults,
+            automaticallyMonitorsRuntime: false
+        )
+        defer { relaunched.shutdownForApplicationTermination() }
+
+        let restored = try await relaunched.automationProxyNodes()
+
+        #expect(restored == original)
+        #expect(!relaunched.isCoreRunning)
+        #expect(!relaunched.isStarted)
+        #expect(fixture.proxyCommands == commandsBeforeQuery)
+    }
+
+    @Test func transientControllerFailureDoesNotRestartAWorkingRuntime() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        let pid = try fixture.corePID()
+        fixture.controller.state.withLock { $0.versionFailuresRemaining = 1 }
+        for _ in 0..<20 { await fixture.store.runtimeTick() }
+        #expect(try fixture.corePID() == pid)
+        #expect(fixture.store.isStarted)
+    }
+
+    @Test func unresponsiveControllerRecoversOnceThenReleasesProxyOnRepeatedFailure() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        await fixture.store.setOutboundMode(.global)
+        let pid = try fixture.corePID()
+        fixture.controller.state.withLock { $0.versionFailuresRemaining = 3 }
+        for _ in 0..<30 { await fixture.store.runtimeTick() }
+        #expect(try fixture.corePID() != pid)
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.selectedMode == .global)
+        #expect(fixture.store.isSystemProxyEnabled)
+
+        fixture.controller.state.withLock { $0.versionFailuresRemaining = 3 }
+        for _ in 0..<30 { await fixture.store.runtimeTick() }
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.store.isSystemProxyEnabled)
+        #expect(fixture.store.lastErrorMessage?.contains("unresponsive after recovery") == true)
+        #expect(fixture.proxyCommands.last == .restore(service: "Wi-Fi", snapshot: RuntimeLifecycleFixture.previousProxy))
+    }
+
+    @Test func failedProxySnapshotCaptureStopsTheNewRuntimeAndPreservesTheError() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make(captureFails: true)
+        defer { fixture.cleanup() }
+
+        await fixture.store.toggleRuntime(configPath: fixture.store.configPath)
+
+        #expect(!fixture.core.isProcessRunning)
+        #expect(!fixture.store.isStarted)
+        #expect(!fixture.store.isCoreRunning)
+        #expect(!fixture.store.isSystemProxyEnabled)
+        #expect(fixture.proxyCommands.isEmpty)
+        #expect(fixture.store.lastErrorMessage == "fixture: proxy capture unavailable")
+        #expect(!fixture.store.isRuntimeTransitioning)
+    }
+
     @Test func endedTrafficStreamsWaitBeforeReconnecting() async throws {
         let fixture = try await RuntimeLifecycleFixture.make()
         defer { fixture.cleanup() }
@@ -263,6 +662,68 @@ struct RuntimeLifecycleRegressionTests {
         #expect(!fixture.store.isRuntimeTransitioning)
     }
 
+    @Test func rejectedRoutingAdditionKeepsTheCurrentConnectionAndSavedRules() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        try await fixture.startVPN()
+        fixture.store.connections = [ConnectionEntry(
+            remoteID: "existing-connection", host: "example.net", rule: "MATCH",
+            chain: "DIRECT", upload: "1 KB", download: "2 KB"
+        )]
+        let previousPID = try fixture.corePID()
+        let previousConfig = try Data(contentsOf: fixture.repository.runtimeConfigURL)
+        let previousController = fixture.store.controllerURL
+        let previousConnections = fixture.store.connections
+        let previousCommands = fixture.proxyCommands
+        let previousValidationCount = try fixture.validationCount()
+        let rules = RoutingOverrideRepository(rootURL: fixture.repository.rootURL)
+        let previousRules = try rules.overrides(profileID: fixture.profileA.id)
+        try fixture.rejectStartup()
+
+        await fixture.store.addRoutingOverride(input: "example.com", policy: .direct)
+
+        #expect(fixture.store.isStarted)
+        #expect(fixture.store.isCoreRunning)
+        #expect(fixture.store.isSystemProxyEnabled)
+        #expect(try fixture.corePID() == previousPID)
+        #expect(try Data(contentsOf: fixture.repository.runtimeConfigURL) == previousConfig)
+        #expect(fixture.store.controllerURL == previousController)
+        #expect(fixture.store.connections == previousConnections)
+        #expect(fixture.proxyCommands == previousCommands)
+        #expect(fixture.store.routingOverrides == previousRules)
+        #expect(try rules.overrides(profileID: fixture.profileA.id) == previousRules)
+        #expect(try fixture.validationCount() == previousValidationCount + 1)
+        #expect(fixture.store.lastErrorMessage == "fixture: selected profile cannot start")
+        #expect(!fixture.store.isRuntimeTransitioning)
+    }
+
+    @Test func rejectedRoutingRemovalKeepsTheRunningControllerAndSavedRule() async throws {
+        let fixture = try await RuntimeLifecycleFixture.make()
+        defer { fixture.cleanup() }
+        await fixture.store.addRoutingOverride(input: "example.com", policy: .direct)
+        try #require(fixture.store.lastErrorMessage == nil)
+        try await fixture.startController()
+        let previousPID = try fixture.corePID()
+        let previousConfig = try Data(contentsOf: fixture.repository.runtimeConfigURL)
+        let previousRules = fixture.store.routingOverrides
+        let rules = RoutingOverrideRepository(rootURL: fixture.repository.rootURL)
+        let previousValidationCount = try fixture.validationCount()
+        try fixture.rejectStartup()
+
+        await fixture.store.removeRoutingOverride(domain: "example.com")
+
+        #expect(fixture.store.isCoreRunning)
+        #expect(!fixture.store.isStarted)
+        #expect(try fixture.corePID() == previousPID)
+        #expect(try Data(contentsOf: fixture.repository.runtimeConfigURL) == previousConfig)
+        #expect(fixture.store.routingOverrides == previousRules)
+        #expect(try rules.overrides(profileID: fixture.profileA.id) == previousRules)
+        #expect(try fixture.validationCount() == previousValidationCount + 1)
+        #expect(fixture.proxyCommands.isEmpty)
+        #expect(fixture.store.lastErrorMessage == "fixture: selected profile cannot start")
+        #expect(!fixture.store.isRuntimeTransitioning)
+    }
+
     @Test func failedReplacementDoesNotDeleteTheOriginalProfile() async throws {
         let fixture = try await RuntimeLifecycleFixture.make()
         defer { fixture.cleanup() }
@@ -467,7 +928,13 @@ private struct RuntimeLifecycleFixture {
         socks: .init(enabled: false, host: "previous-proxy", port: 8888)
     )
 
-    static func make(occupyPreferredPorts: Bool = false, privilegedTUN: (any PrivilegedTUNRuntime)? = nil) async throws -> RuntimeLifecycleFixture {
+    static func make(
+        occupyPreferredPorts: Bool = false,
+        privilegedTUN: (any PrivilegedTUNRuntime)? = nil,
+        captureFails: Bool = false,
+        restoreFailuresRemaining: Int = 0,
+        ignoresProxyRestore: Bool = false
+    ) async throws -> RuntimeLifecycleFixture {
         let identifier = UUID().uuidString
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(identifier)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -477,6 +944,9 @@ private struct RuntimeLifecycleFixture {
         fixture_dir="$(dirname "$0")"
         if [ "$1" = "-t" ]; then
           echo attempt >> "$fixture_dir/validations"
+          if [ -f "$fixture_dir/delay-start" ]; then
+            /bin/sleep 0.2
+          fi
           if [ -f "$fixture_dir/reject" ]; then
             /bin/sleep 0.2
             echo 'fixture: selected profile cannot start' >&2
@@ -517,6 +987,8 @@ private struct RuntimeLifecycleFixture {
         let core = MihomoCoreService(coreBinaryURL: executable, privilegedTUN: privilegedTUN)
         let defaults = try #require(UserDefaults(suiteName: identifier))
         let previousProxy = previousProxy
+        let currentProxy = Mutex(previousProxy)
+        let restoreFailures = Mutex(restoreFailuresRemaining)
         let store = AppStore(
             coreService: core,
             apiService: MihomoAPIService(
@@ -524,8 +996,38 @@ private struct RuntimeLifecycleFixture {
                 session: session
             ),
             systemProxyService: SystemProxyService(
-                capture: { _ in previousProxy },
-                apply: { command in controller.state.withLock { $0.proxyCommands.append(command) } }
+                capture: { _ in
+                    if captureFails {
+                        throw NSError(
+                            domain: "NexoraRuntimeLifecycleFixture", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "fixture: proxy capture unavailable"]
+                        )
+                    }
+                    return currentProxy.withLock { $0 }
+                },
+                apply: { command in
+                    controller.state.withLock { $0.proxyCommands.append(command) }
+                    if command.continuesAfterFailure {
+                        if restoreFailures.withLock({ remaining in
+                            guard remaining > 0 else { return false }
+                            remaining -= 1
+                            return true
+                        }) {
+                            throw SystemProxyError.commandFailed(["fixture: restore failed"])
+                        }
+                        if !ignoresProxyRestore { currentProxy.withLock { $0 = previousProxy } }
+                    } else {
+                        let web = command.steps[0].arguments
+                        let socks = command.steps[2].arguments
+                        currentProxy.withLock {
+                            $0 = SystemProxySnapshot(
+                                web: .init(enabled: true, host: web[2], port: Int(web[3])!),
+                                secureWeb: .init(enabled: true, host: web[2], port: Int(web[3])!),
+                                socks: .init(enabled: true, host: socks[2], port: Int(socks[3])!)
+                            )
+                        }
+                    }
+                }
             ),
             profileRepository: repository,
             runtimeConfigurationPreparer: RuntimeConfigurationPreparer(
@@ -542,7 +1044,8 @@ private struct RuntimeLifecycleFixture {
                 directFetcher: DirectNetworkIdentityFetcher(executableURL: fakeCurl),
                 systemTunnelDetector: { false }
             ),
-            userDefaults: defaults
+            userDefaults: defaults,
+            automaticallyMonitorsRuntime: false
         )
         return RuntimeLifecycleFixture(
             directory: directory, repository: repository, profileA: profileA, profileB: profileB,
@@ -627,6 +1130,7 @@ private struct RuntimeLifecycleFixture {
 
     func cleanup() {
         store.shutdownForApplicationTermination()
+        core.stopImmediately()
         session.invalidateAndCancel()
         _ = RuntimeLifecycleURLProtocol.fixtures.withLock { $0.removeValue(forKey: identifier) }
         defaults.removePersistentDomain(forName: identifier)
@@ -636,6 +1140,7 @@ private struct RuntimeLifecycleFixture {
 
 private final class RuntimeControllerFixture: Sendable {
     struct State: Sendable {
+        var versionFailuresRemaining = 0
         var endsTrafficStream = false
         var trafficRequestTimes: [ContinuousClock.Instant] = []
         var delayRequestCount = 0
@@ -648,6 +1153,7 @@ private final class RuntimeControllerFixture: Sendable {
         var rejectTun = false
         var ignoreTun = false
         var selectedProxy: String?
+        var ignoreProxySelection = false
         var rejectCloseConnections = false
         var usesProfileProxySnapshots = false
     }
@@ -705,9 +1211,18 @@ private final class RuntimeControllerFixture: Sendable {
             return (503, Data(#"{"message":"Controller unavailable"}"#.utf8))
         }
         let path = request.url?.path
+        if path == "/version", state.withLock({ state in
+            guard state.versionFailuresRemaining > 0 else { return false }
+            state.versionFailuresRemaining -= 1
+            return true
+        }) {
+            return (503, Data(#"{"message":"Fixture controller unresponsive"}"#.utf8))
+        }
         if request.httpMethod == "PUT", path == "/proxies/Routes" {
             let node = try jsonBody(request)["name"] as? String
-            state.withLock { $0.selectedProxy = node }
+            state.withLock {
+                if !$0.ignoreProxySelection { $0.selectedProxy = node }
+            }
             return (204, Data())
         }
         if request.httpMethod == "DELETE", path == "/connections",

@@ -5,20 +5,32 @@ import SwiftUI
 @Observable
 @MainActor
 public final class AppStore {
+    public static let shared = AppStore()
+    public let websiteComparison: WebsiteComparisonStore
     private let userDefaults: UserDefaults
     private let coreService: MihomoCoreService
     private var apiService: MihomoAPIService
     private let systemProxyService: SystemProxyService
+    private let systemProxyRecoveryRepository: SystemProxyRecoveryRepository
     private let profileRepository: ManagedProfileRepository
     private let runtimeConfigurationPreparer: RuntimeConfigurationPreparer
     private let networkIdentityService: NetworkIdentityService
     private let networkPortProbe: @Sendable ([NetworkPortTarget]) async -> [NetworkPortCheck]
     private let networkDNSProbe: @Sendable ([NetworkDNSTarget]) async -> [NetworkDNSCheck]
     private let networkEndpointProbe: @Sendable ([NetworkEndpointTarget]) async -> [NetworkEndpointCheck]
+    private let diagnosticExplanationService: DiagnosticExplanationService
     private let proxySelectionRepository: ProxySelectionRepository
     private let routingOverrideRepository: RoutingOverrideRepository
     private var previousSystemProxySnapshot: SystemProxySnapshot?
+    private var previousSystemProxyService: String?
+    private var managedSystemProxySnapshot: SystemProxySnapshot?
     private var runtimeTickCount = 0
+    @ObservationIgnored private var runtimeMonitorTask: Task<Void, Never>?
+    private let automaticallyMonitorsRuntime: Bool
+    private var isRuntimeTickInProgress = false
+    private var consecutiveControllerFailures = 0
+    private var lastAutomaticRecovery: ContinuousClock.Instant?
+    private var lastProxyRestoreAttempt: ContinuousClock.Instant?
     private var trafficStreamTask: Task<Void, Never>?
     private var latestUploadBytesPerSecond = 0
     private var latestDownloadBytesPerSecond = 0
@@ -26,17 +38,19 @@ public final class AppStore {
     private var isApplyingOutboundMode = false
     private var pendingOutboundMode: OutboundMode?
     @ObservationIgnored private var runtimeTransitionWaiters: [CheckedContinuation<Void, Never>] = []
-    private var runtimeGeneration = 0
+    private var runtimeGeneration = 0 {
+        didSet { invalidateNetworkDiagnosis() }
+    }
     private var networkIdentityGeneration = 0
     private(set) var isRefreshingNetworkIdentity = false
     public private(set) var isRuntimeTransitioning = false
     public var selectedSection: AppSection = .dashboard
-    public var isCoreRunning = false
-    public var isStarted = false
+    public var isCoreRunning = false { didSet { if oldValue != isCoreRunning { invalidateNetworkDiagnosis() } } }
+    public var isStarted = false { didSet { if oldValue != isStarted { invalidateNetworkDiagnosis() } } }
     public var coreStatus: CoreRuntimeStatus = .stopped
-    public var isSystemProxyEnabled = false
-    public var isTunEnabled = false
-    public var proxyHost = "127.0.0.1"
+    public var isSystemProxyEnabled = false { didSet { if oldValue != isSystemProxyEnabled { invalidateNetworkDiagnosis() } } }
+    public var isTunEnabled = false { didSet { if oldValue != isTunEnabled { invalidateNetworkDiagnosis() } } }
+    public var proxyHost = "127.0.0.1" { didSet { if oldValue != proxyHost { invalidateNetworkDiagnosis() } } }
     public var networkService = "Wi-Fi"
     public var appearanceMode: AppAppearance = .system {
         didSet {
@@ -51,6 +65,19 @@ public final class AppStore {
     public var language: AppLanguage = .system {
         didSet {
             userDefaults.set(language.rawValue, forKey: "language")
+            if oldValue != language {
+                cancelDiagnosticExplanation()
+                diagnosticExplanationDidFallback = false
+                if let diagnosticExplanationContext {
+                    diagnosticExplanation = diagnosticExplanationService.ruleExplanation(
+                        context: diagnosticExplanationContext, language: language
+                    )
+                } else {
+                    diagnosticExplanation = nil
+                    diagnosticExplanationDate = nil
+                    isDiagnosticExplanationStale = false
+                }
+            }
         }
     }
     public var reduceMotion = false {
@@ -92,9 +119,9 @@ public final class AppStore {
             userDefaults.set(latencyTestTimeoutMillisecondsStorage, forKey: "latencyTestTimeoutMilliseconds")
         }
     }
-    public var httpPort = 7890
-    public var socksPort = 7891
-    public var selectedMode: OutboundMode = .rule
+    public var httpPort = 7890 { didSet { if oldValue != httpPort { invalidateNetworkDiagnosis() } } }
+    public var socksPort = 7891 { didSet { if oldValue != socksPort { invalidateNetworkDiagnosis() } } }
+    public var selectedMode: OutboundMode = .rule { didSet { if oldValue != selectedMode { invalidateNetworkDiagnosis() } } }
     public private(set) var stagedOutboundMode: OutboundMode?
     public private(set) var stagedTunEnabled: Bool?
     public var selectedProfile = "No Profile"
@@ -106,11 +133,26 @@ public final class AppStore {
     var routingOverrides: [RoutingOverride] = []
     public private(set) var controllerURL = URL(string: "http://127.0.0.1:9090")!
     public private(set) var controllerSecret: String?
-    public var externalIP = "Detecting..."
+    public var externalIP = "Detecting..." { didSet { if oldValue != externalIP { invalidateNetworkDiagnosis() } } }
     public var networkCountryCode = ""
     public var networkCountryName = ""
-    public var networkEgressKind: NetworkEgressKind = .detecting
+    public var networkEgressKind: NetworkEgressKind = .detecting {
+        didSet {
+            if networkEgressKind != oldValue { invalidateNetworkDiagnosis() }
+        }
+    }
     public private(set) var networkDiagnosticReport = NetworkDiagnosticReport.placeholder
+    public private(set) var networkDiagnosticReportDate: Date?
+    public private(set) var diagnosticExplanation: DiagnosticExplanation?
+    public private(set) var diagnosticExplanationDate: Date?
+    public private(set) var isDiagnosticExplanationStale = false
+    public private(set) var diagnosticModelAvailability: DiagnosticModelAvailability = .unavailable
+    public private(set) var isExplainingDiagnosis = false
+    public private(set) var diagnosticExplanationDidFallback = false
+    private var diagnosticExplanationContext: DiagnosticExplanationContext?
+    private var diagnosticExplanationGeneration = 0
+    @ObservationIgnored private var diagnosticExplanationTask: Task<Void, Never>?
+    private var networkDiagnosticRevision = 0
     public private(set) var isRunningNetworkDiagnosis = false
     public private(set) var networkPortChecks: [NetworkPortCheck] = []
     public private(set) var networkDNSChecks: [NetworkDNSCheck] = []
@@ -123,7 +165,32 @@ public final class AppStore {
     public var uploadTrafficUnit = "B"
     public var downloadTrafficUnit = "B"
     private(set) var trafficUsageTotals = TrafficUsageTotals.zero
-    public var lastErrorMessage: String?
+    // Proxy cleanup failures must survive successful traffic/config responses.
+    public private(set) var systemProxyErrorMessage: String? {
+        didSet {
+            if systemProxyErrorMessage != oldValue {
+                acknowledgedSystemProxyError = nil
+                invalidateNetworkDiagnosis()
+            }
+        }
+    }
+    private var acknowledgedSystemProxyError: String?
+    private var transientErrorMessage: String?
+    public var lastErrorMessage: String? {
+        get { systemProxyErrorMessage ?? transientErrorMessage }
+        set { transientErrorMessage = newValue }
+    }
+    public var errorAlertMessage: String? {
+        if let systemProxyErrorMessage, systemProxyErrorMessage != acknowledgedSystemProxyError {
+            return systemProxyErrorMessage
+        }
+        return transientErrorMessage
+    }
+
+    public func dismissErrorAlert() {
+        acknowledgedSystemProxyError = systemProxyErrorMessage
+        transientErrorMessage = nil
+    }
     public private(set) var profileValidationStates: [ManagedProfile.ID: ProfileValidationState] = [:]
     var isLatencyTesting = false
     var latencyTestProgress = LatencyTestProgress(completed: 0, total: 0)
@@ -151,19 +218,26 @@ public final class AppStore {
         networkPortProbe: @escaping @Sendable ([NetworkPortTarget]) async -> [NetworkPortCheck] = NetworkPortProbe.check,
         networkDNSProbe: @escaping @Sendable ([NetworkDNSTarget]) async -> [NetworkDNSCheck] = NetworkDNSProbe.resolve,
         networkEndpointProbe: @escaping @Sendable ([NetworkEndpointTarget]) async -> [NetworkEndpointCheck] = NetworkEndpointProbe.check,
+        diagnosticExplanationService: DiagnosticExplanationService = DiagnosticExplanationService(),
+        websiteComparisonService: WebsiteComparisonService = WebsiteComparisonService(),
         proxySelectionRepository: ProxySelectionRepository? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        automaticallyMonitorsRuntime: Bool = true
     ) {
+        self.automaticallyMonitorsRuntime = automaticallyMonitorsRuntime
         self.userDefaults = userDefaults
         self.coreService = coreService
         self.apiService = apiService
         self.systemProxyService = systemProxyService
+        systemProxyRecoveryRepository = SystemProxyRecoveryRepository(rootURL: profileRepository.rootURL)
         self.profileRepository = profileRepository
         self.runtimeConfigurationPreparer = runtimeConfigurationPreparer
         self.networkIdentityService = networkIdentityService
         self.networkPortProbe = networkPortProbe
         self.networkDNSProbe = networkDNSProbe
         self.networkEndpointProbe = networkEndpointProbe
+        self.diagnosticExplanationService = diagnosticExplanationService
+        websiteComparison = WebsiteComparisonStore(service: websiteComparisonService)
         self.proxySelectionRepository = proxySelectionRepository
             ?? ProxySelectionRepository(rootURL: profileRepository.rootURL)
         routingOverrideRepository = RoutingOverrideRepository(rootURL: profileRepository.rootURL)
@@ -292,8 +366,8 @@ public final class AppStore {
         let profile = try await profileRepository.importProfile(
             from: sourceURL, name: name,
             subscriptionURL: subscriptionURL, trafficUsage: trafficUsage
-        ) { [coreService] stagedURL in
-            await coreService.validateConfig(path: stagedURL.path)
+        ) { stagedURL in
+            await self.validateProfileConfiguration(at: stagedURL)
         }
         let activated = await activateManagedProfile(profile)
         profileValidationStates[profile.id] = .valid()
@@ -351,9 +425,9 @@ public final class AppStore {
                 if let replacement = managedProfiles.first(where: { $0.id != id }) {
                     guard await activateManagedProfile(replacement) else { return }
                 } else if isStarted {
-                    await stopRuntime(userInitiated: true)
+                    guard await stopRuntime(userInitiated: true) else { return }
                 } else {
-                    await stopControllerOnly(userInitiated: true)
+                    guard await stopControllerOnly(userInitiated: true) else { return }
                 }
             }
             try profileRepository.remove(id)
@@ -396,7 +470,7 @@ public final class AppStore {
             return
         }
         profileValidationStates[id] = .checking
-        switch await coreService.validateConfig(path: profile.managedConfigURL.path) {
+        switch await validateProfileConfiguration(at: profile.managedConfigURL) {
         case .success:
             profileValidationStates[id] = .valid()
             lastErrorMessage = nil
@@ -410,7 +484,7 @@ public final class AppStore {
         var firstFailure: String?
         for profile in managedProfiles {
             profileValidationStates[profile.id] = .checking
-            switch await coreService.validateConfig(path: profile.managedConfigURL.path) {
+            switch await validateProfileConfiguration(at: profile.managedConfigURL) {
             case .success:
                 profileValidationStates[profile.id] = .valid()
             case let .failure(message):
@@ -421,6 +495,29 @@ public final class AppStore {
             }
         }
         lastErrorMessage = firstFailure
+    }
+
+    private func validateProfileConfiguration(at sourceURL: URL) async -> ConfigValidationResult {
+        do {
+            let yaml = try String(contentsOf: sourceURL, encoding: .utf8)
+            guard let compatibleYAML = try runtimeConfigurationPreparer.validationConfiguration(yaml: yaml) else {
+                return await coreService.validateConfig(path: sourceURL.path)
+            }
+            // Validate compatibility edits without changing the imported source.
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("NexoraValidation-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let validationURL = directory.appendingPathComponent("config.yaml")
+            try compatibleYAML.write(to: validationURL, atomically: true, encoding: .utf8)
+            // Keep the existing validation home/working-directory behavior (no -d).
+            return await coreService.validateConfig(path: validationURL.path)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
     }
 
     func addRoutingOverride(input: String, policy: RoutingPolicy) async {
@@ -442,6 +539,9 @@ public final class AppStore {
                     throw RuntimeConfigurationError.missingVPNPolicyGroup
                 }
             }
+            let candidateOverrides = routingOverrides.filter { $0.domain != domain }
+                + [RoutingOverride(domain: domain, policy: policy)]
+            try await validateRoutingChanges(candidateOverrides)
             try routingOverrideRepository.upsert(
                 domain: domain,
                 policy: policy,
@@ -462,6 +562,7 @@ public final class AppStore {
             return
         }
         do {
+            try await validateRoutingChanges(routingOverrides.filter { $0.domain != domain })
             try routingOverrideRepository.remove(domain: domain, profileID: profileID)
             reloadRoutingOverrides()
             try await restartRuntimeForRoutingChangesIfNeeded()
@@ -480,6 +581,137 @@ public final class AppStore {
             return
         }
         _ = await startRuntime(configPath: configPath)
+    }
+
+    /// Siri uses explicit desired states and the same transition queue as the UI.
+    public func setConnectionEnabledForAutomation(_ enabled: Bool) async throws {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        try Task.checkCancellation()
+        transientErrorMessage = nil
+        if enabled {
+            if !isStarted || !coreService.isProcessRunning {
+                guard await startRuntime(configPath: configPath) else {
+                    throw automationFailure("Nexora could not connect.")
+                }
+            }
+            if !isSystemProxyEnabled, !isTunEnabled {
+                await applySystemProxy(enabled: true, service: networkService)
+            }
+            guard isStarted, coreService.isProcessRunning, systemProxyErrorMessage == nil else {
+                throw automationFailure("Nexora could not connect.")
+            }
+        } else {
+            if isStarted {
+                await stopRuntime(userInitiated: true)
+                guard !isStarted else { throw automationFailure("The system proxy could not be restored.") }
+            } else if isCoreRunning {
+                guard await stopControllerOnly(userInitiated: true) else {
+                    throw automationFailure("The system proxy could not be restored.")
+                }
+            }
+            guard restorePreviousSystemProxy() else {
+                throw automationFailure("The system proxy could not be restored.")
+            }
+        }
+    }
+
+    public func setTUNEnabledForAutomation(_ enabled: Bool) async throws {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        try Task.checkCancellation()
+        transientErrorMessage = nil
+        if !enabled, !isStarted, coreService.isPrivilegedRunning {
+            guard await stopControllerOnly(userInitiated: true) else {
+                throw automationFailure("The system proxy could not be restored.")
+            }
+        }
+        await setTunDuringTransition(enabled)
+        guard isTunEnabled == enabled, transientErrorMessage == nil,
+              systemProxyErrorMessage == nil else {
+            throw automationFailure("Nexora could not change TUN mode.")
+        }
+    }
+
+    /// Parameter resolution is read-only: it never launches a core, enables
+    /// proxy settings, or requests TUN privileges just to populate Siri's list.
+    public func automationProxyNodes() async throws -> [AutomationProxyNode] {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        try Task.checkCancellation()
+        if isCoreRunning, coreService.isProcessRunning {
+            await fetchProxies()
+        }
+        if !selectedProfileProxyGroups.isEmpty { return currentAutomationProxyNodes() }
+        guard let profileID = selectedManagedProfileID?.uuidString,
+              let data = try? Data(contentsOf: automationCatalogURL),
+              let nodes = try? JSONDecoder().decode([AutomationProxyNode].self, from: data) else { return [] }
+        return nodes.filter { $0.profileID == profileID }
+    }
+
+    public func selectProxyForAutomation(id: String) async throws {
+        await beginRuntimeTransition()
+        defer { endRuntimeTransition() }
+        try Task.checkCancellation()
+        // Check before launching anything: an old shortcut must not alter a
+        // newly selected profile, even if it happens to contain the same name.
+        let knownNodes: [AutomationProxyNode]
+        if !selectedProfileProxyGroups.isEmpty {
+            knownNodes = currentAutomationProxyNodes()
+        } else if let data = try? Data(contentsOf: automationCatalogURL),
+                  let nodes = try? JSONDecoder().decode([AutomationProxyNode].self, from: data) {
+            knownNodes = nodes.filter { $0.profileID == selectedManagedProfileID?.uuidString }
+        } else { knownNodes = [] }
+        guard knownNodes.contains(where: { $0.id == id }) else { throw AutomationControlError.nodeUnavailable }
+        if !isStarted, stagedTunEnabled ?? isTunEnabled {
+            throw AutomationControlError.operationFailed(
+                "Connect Nexora before selecting a node while TUN is enabled."
+            )
+        }
+        transientErrorMessage = nil
+        guard await ensureControllerAvailable(configPath: configPath) else {
+            throw automationFailure("Nexora could not load the selected profile.")
+        }
+        await fetchProxies()
+        guard let node = currentAutomationProxyNodes().first(where: { $0.id == id }) else {
+            throw AutomationControlError.nodeUnavailable
+        }
+        try await selectProxyDuringTransition(groupName: node.groupName, nodeName: node.name).get()
+    }
+
+    private func automationFailure(_ fallback: String) -> AutomationControlError {
+        .operationFailed(lastErrorMessage ?? fallback)
+    }
+
+    private var automationCatalogURL: URL {
+        profileRepository.rootURL.appendingPathComponent("automation-nodes.json")
+    }
+
+    private func currentAutomationProxyNodes() -> [AutomationProxyNode] {
+        guard let profileID = selectedManagedProfileID?.uuidString else { return [] }
+        let groups = MenuBarProxyResolver.selectors(in: selectedProfileProxyGroups)
+        var nodes: [AutomationProxyNode] = []
+        for group in groups {
+            for node in group.nodes where !node.isGroup {
+                nodes.append(AutomationProxyNode(profileID: profileID, groupName: group.name, name: node.name))
+            }
+        }
+        return nodes.sorted { lhs, rhs in
+            lhs.name == rhs.name ? lhs.groupName < rhs.groupName : lhs.name < rhs.name
+        }
+    }
+
+    private func saveAutomationProxyCatalog() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(currentAutomationProxyNodes()) else { return }
+        guard (try? Data(contentsOf: automationCatalogURL)) != data else { return }
+        do {
+            try data.write(to: automationCatalogURL, options: .atomic)
+            NotificationCenter.default.post(name: AutomationProxyNode.catalogDidChange, object: nil)
+        } catch {
+            // A read-only/full disk must not break an otherwise working proxy.
+        }
     }
 
     private func startRuntime(configPath: String) async -> Bool {
@@ -516,6 +748,12 @@ public final class AppStore {
             return false
         }
         await applySystemProxy(enabled: true, service: networkService)
+        guard isSystemProxyEnabled, systemProxyErrorMessage == nil else {
+            let failure = lastErrorMessage ?? "Could not apply system proxy settings."
+            await stopRuntime(userInitiated: false)
+            lastErrorMessage = failure
+            return false
+        }
         await refreshNetworkIdentity()
         return isStarted && lastErrorMessage == nil
     }
@@ -550,7 +788,7 @@ public final class AppStore {
             }
             await fetchProxies()
         case .restartController:
-            await stopControllerOnly(userInitiated: true)
+            guard await stopControllerOnly(userInitiated: true) else { return }
             guard await ensureControllerAvailable(configPath: configPath) else {
                 return
             }
@@ -560,29 +798,46 @@ public final class AppStore {
             await fetchProxies()
         case .restartActiveRuntime:
             stagedOutboundMode = activeMode
-            await stopRuntime(userInitiated: true)
+            guard await stopRuntime(userInitiated: true) else { return }
             _ = await startRuntime(configPath: configPath)
         }
     }
 
-    public func shutdownForApplicationTermination() {
+    @discardableResult
+    public func shutdownForApplicationTermination() -> Bool {
+        guard restorePreviousSystemProxy() else { return false }
+        websiteComparison.cancel()
+        cancelDiagnosticExplanation()
+        runtimeMonitorTask?.cancel()
+        runtimeMonitorTask = nil
         stopTrafficStream()
-        if let previousSystemProxySnapshot {
-            try? systemProxyService.apply(
-                .restore(service: networkService, snapshot: previousSystemProxySnapshot)
-            )
-            self.previousSystemProxySnapshot = nil
-        }
         coreService.stopImmediately()
         coreStatus = coreService.status
         isStarted = false
         isCoreRunning = false
-        isSystemProxyEnabled = false
+        return true
+    }
+
+    public func recoverSystemProxyAfterRelaunch() {
+        guard !isStarted, !coreService.isProcessRunning else { return }
+        restorePreviousSystemProxy()
+    }
+
+    public func resumeRuntimeAfterWake() async {
+        guard !isRuntimeTransitioning, isCoreRunning || isStarted else { return }
+        // Recreate a stream whose socket may have become stale during sleep.
+        if isStarted { startTrafficStream() }
+        runtimeTickCount = 9
+        await runtimeTick()
     }
 
     public func toggleSystemProxy(service: String = "Wi-Fi") async {
         guard !isRuntimeTransitioning else { return }
         guard isStarted else {
+            if previousSystemProxySnapshot != nil {
+                restorePreviousSystemProxy()
+                return
+            }
             isSystemProxyEnabled.toggle()
             return
         }
@@ -640,18 +895,22 @@ public final class AppStore {
         guard !isRuntimeTransitioning else { return }
         await beginRuntimeTransition()
         defer { endRuntimeTransition() }
+        await setTunDuringTransition(enabled)
+    }
+
+    private func setTunDuringTransition(_ enabled: Bool) async {
         let previousValue = isTunEnabled
         if isStarted, coreService.supportsPrivilegedTUN, enabled != previousValue {
             if enabled {
                 do { try coreService.authorizeTUN() }
                 catch { lastErrorMessage = error.localizedDescription; return }
             }
-            await stopRuntime(userInitiated: true)
+            guard await stopRuntime(userInitiated: true) else { return }
             stagedTunEnabled = enabled
             isTunEnabled = enabled
             if !(await startRuntime(configPath: configPath)) {
                 let failure = lastErrorMessage ?? "TUN could not start."
-                await coreService.stop(userInitiated: true)
+                guard await stopControllerOnly(userInitiated: true) else { return }
                 stagedTunEnabled = previousValue
                 isTunEnabled = previousValue
                 _ = await startRuntime(configPath: configPath)
@@ -682,8 +941,13 @@ public final class AppStore {
     public func selectProxyRemote(groupName: String, nodeName: String) async {
         await beginRuntimeTransition()
         defer { endRuntimeTransition() }
+        await selectProxyDuringTransition(groupName: groupName, nodeName: nodeName)
+    }
+
+    @discardableResult
+    private func selectProxyDuringTransition(groupName: String, nodeName: String) async -> Result<Void, Error> {
         guard await ensureControllerAvailable(configPath: configPath) else {
-            return
+            return .failure(automationFailure("Nexora could not load the selected profile."))
         }
         let targetGroups = ProxySelectionResolver.targetGroups(
             selectedGroupName: groupName,
@@ -692,13 +956,14 @@ public final class AppStore {
         )
         guard !targetGroups.isEmpty else {
             lastErrorMessage = "This automatic group cannot be manually locked without a parent selector."
-            return
+            return .failure(automationFailure("This node cannot be selected manually."))
         }
         do {
             for targetGroup in targetGroups {
                 _ = try await apiService.data(
                     for: .changeProxy(group: targetGroup, proxy: nodeName)
                 )
+                invalidateNetworkDiagnosis()
                 selectProxy(groupName: targetGroup, nodeName: nodeName)
                 if let profileID = selectedManagedProfileID {
                     try proxySelectionRepository.save(
@@ -709,11 +974,20 @@ public final class AppStore {
                 }
             }
             _ = try await apiService.data(for: .closeAllConnections)
+            let confirmation = try await apiService.data(for: .proxies)
+            let confirmedGroups = try MihomoAPIDecoder.proxyGroups(from: confirmation)
+            guard targetGroups.allSatisfy({ target in
+                confirmedGroups.first(where: { $0.name == target })?
+                    .nodes.first(where: \.isSelected)?.name == nodeName
+            }) else {
+                throw AutomationControlError.operationFailed("Mihomo did not apply the requested node selection.")
+            }
             lastErrorMessage = nil
             await fetchProxies()
             if isStarted {
                 await refreshNetworkIdentity()
             }
+            return .success(())
         } catch {
             let message = error.localizedDescription
             // A later failure (including closing old connections) cannot undo a
@@ -721,6 +995,7 @@ public final class AppStore {
             await fetchProxies()
             lastErrorMessage = message
             if isStarted { await refreshNetworkIdentity() }
+            return .failure(error)
         }
     }
 
@@ -845,7 +1120,8 @@ public final class AppStore {
                         let latency = await service.proxyDelay(
                             proxy: test.proxyName,
                             url: test.url,
-                            timeout: settings.timeoutMilliseconds
+                            timeout: settings.timeoutMilliseconds,
+                            provider: test.providerName
                         )
                         return (test.proxyName, latency)
                     }
@@ -913,6 +1189,14 @@ public final class AppStore {
     }
 
     public func runtimeTick() async {
+        guard !isRuntimeTickInProgress else { return }
+        isRuntimeTickInProgress = true
+        defer { isRuntimeTickInProgress = false }
+        if !isStarted, previousSystemProxySnapshot != nil, systemProxyErrorMessage != nil {
+            if lastProxyRestoreAttempt.map({ $0.duration(to: .now) >= .seconds(5) }) ?? true {
+                restorePreviousSystemProxy()
+            }
+        }
         guard !isRuntimeTransitioning, isCoreRunning || isStarted else {
             return
         }
@@ -920,9 +1204,12 @@ public final class AppStore {
             handleCoreFailure(coreService.status.failureMessage ?? "Mihomo exited unexpectedly.")
             return
         }
-        guard isStarted else { return }
         let generation = runtimeGeneration
         runtimeTickCount += 1
+        if runtimeTickCount.isMultiple(of: 10) {
+            guard await checkControllerHealth(), generation == runtimeGeneration else { return }
+        }
+        guard isStarted else { return }
         advanceSpeedGraph()
         if runtimeTickCount.isMultiple(of: 4) {
             await refreshConnections()
@@ -950,10 +1237,13 @@ public final class AppStore {
     private func fetchProxies() async {
         let generation = runtimeGeneration
         let profileID = selectedManagedProfileID
+        let service = apiService
         do {
-            let data = try await apiService.data(for: .proxies)
+            async let providerData = try? service.data(for: .proxyProviders)
+            let data = try await service.data(for: .proxies)
+            let providers = await providerData
             guard generation == runtimeGeneration, profileID == selectedManagedProfileID else { return }
-            applyProxyResponse(data, profileID: profileID)
+            applyProxyResponse(data, providerData: providers, profileID: profileID)
         } catch {
             guard generation == runtimeGeneration, profileID == selectedManagedProfileID else { return }
             lastErrorMessage = error.localizedDescription
@@ -988,7 +1278,7 @@ public final class AppStore {
         applyProxyResponse(data, profileID: selectedManagedProfileID)
     }
 
-    func applyProxyResponse(_ data: Data, profileID: ManagedProfile.ID?) {
+    func applyProxyResponse(_ data: Data, providerData: Data? = nil, profileID: ManagedProfile.ID?) {
         guard profileID == selectedManagedProfileID else { return }
         do {
             let measuredLatencies = Dictionary(
@@ -999,7 +1289,7 @@ public final class AppStore {
                     },
                 uniquingKeysWith: { current, _ in current }
             )
-            var groups = try MihomoAPIDecoder.proxyGroups(from: data)
+            var groups = try MihomoAPIDecoder.proxyGroups(from: data, providerData: providerData)
             for groupIndex in groups.indices {
                 for nodeIndex in groups[groupIndex].nodes.indices {
                     let nodeName = groups[groupIndex].nodes[nodeIndex].name
@@ -1008,6 +1298,7 @@ public final class AppStore {
                 }
             }
             proxyGroups = groups
+            saveAutomationProxyCatalog()
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -1061,23 +1352,84 @@ public final class AppStore {
     }
 
     public func applySystemProxy(enabled: Bool, service: String = "Wi-Fi") async {
+        let wasEnabled = isSystemProxyEnabled
         do {
+            try loadSystemProxyRecoveryIfNeeded()
+            if enabled, let previousSystemProxyService, previousSystemProxyService != service {
+                guard restorePreviousSystemProxy() else { return }
+            }
             if enabled, previousSystemProxySnapshot == nil {
-                previousSystemProxySnapshot = try? systemProxyService.capture(service: service)
+                let snapshot = try systemProxyService.capture(service: service)
+                    .removingProxy(host: proxyHost, httpPort: httpPort, socksPort: socksPort)
+                let managed = SystemProxySnapshot.enabled(host: proxyHost, httpPort: httpPort, socksPort: socksPort)
+                try systemProxyRecoveryRepository.save(.ownedByCurrentProcess(service: service, snapshot: snapshot, managedProxy: managed))
+                previousSystemProxySnapshot = snapshot
+                previousSystemProxyService = service
+                managedSystemProxySnapshot = managed
+            } else if enabled, let snapshot = previousSystemProxySnapshot {
+                let managed = SystemProxySnapshot.enabled(host: proxyHost, httpPort: httpPort, socksPort: socksPort)
+                try systemProxyRecoveryRepository.save(.ownedByCurrentProcess(service: service, snapshot: snapshot, managedProxy: managed))
+                managedSystemProxySnapshot = managed
             }
             if !enabled {
                 restorePreviousSystemProxy()
                 return
             }
-            let command = enabled
-                ? SystemProxyCommand.enable(service: service, host: proxyHost, httpPort: httpPort, socksPort: socksPort)
-                : SystemProxyCommand.disable(service: service)
+            let command = SystemProxyCommand.enable(
+                service: service, host: proxyHost, httpPort: httpPort, socksPort: socksPort
+            )
             try systemProxyService.apply(command)
             isSystemProxyEnabled = enabled
+            systemProxyErrorMessage = nil
             lastErrorMessage = nil
         } catch {
-            lastErrorMessage = error.localizedDescription
-            isSystemProxyEnabled = !enabled
+            if enabled, previousSystemProxySnapshot != nil {
+                restorePreviousSystemProxy()
+            } else {
+                isSystemProxyEnabled = wasEnabled
+            }
+            systemProxyErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func startRuntimeMonitorIfNeeded() {
+        guard automaticallyMonitorsRuntime, runtimeMonitorTask == nil else { return }
+        runtimeMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(500)) }
+                catch { return }
+                guard let self else { return }
+                await self.runtimeTick()
+            }
+        }
+    }
+
+    private func checkControllerHealth() async -> Bool {
+        let generation = runtimeGeneration
+        do {
+            _ = try await apiService.data(for: .version)
+            guard generation == runtimeGeneration, !isRuntimeTransitioning, !Task.isCancelled else { return false }
+            consecutiveControllerFailures = 0
+            return true
+        } catch {
+            guard generation == runtimeGeneration, !isRuntimeTransitioning, !Task.isCancelled else { return false }
+            consecutiveControllerFailures += 1
+            guard consecutiveControllerFailures >= 3 else { return false }
+            consecutiveControllerFailures = 0
+            // One recovery per minute. Persistent faults release the system proxy
+            // instead of trapping the whole machine in an endless restart loop.
+            if let lastAutomaticRecovery, lastAutomaticRecovery.duration(to: .now) < .seconds(60) {
+                await beginRuntimeTransition()
+                defer { endRuntimeTransition() }
+                let failure = "Mihomo controller is unresponsive after recovery. The connection was stopped to restore network access."
+                guard await stopRuntime(userInitiated: false) else { return false }
+                coreStatus = .failed(failure)
+                lastErrorMessage = failure
+                return false
+            }
+            lastAutomaticRecovery = .now
+            await restartCore()
+            return false
         }
     }
 
@@ -1144,9 +1496,13 @@ public final class AppStore {
 
     public func runNetworkDiagnosis() async {
         guard !isRunningNetworkDiagnosis else { return }
+        cancelDiagnosticExplanation()
         isRunningNetworkDiagnosis = true
         defer { isRunningNetworkDiagnosis = false }
+        let generation = runtimeGeneration
         await refreshNetworkIdentity()
+        let egress = networkEgressKind
+        let revision = networkDiagnosticRevision
         let activeSystemTunnel = await networkIdentityService.hasActiveSystemTunnel()
         let targets = NetworkPortTarget.standard(
             httpPort: httpPort,
@@ -1156,11 +1512,15 @@ public final class AppStore {
         async let portChecks = networkPortProbe(targets)
         async let dnsChecks = networkDNSProbe(NetworkDNSTarget.standard)
         async let endpointChecks = networkEndpointProbe(NetworkEndpointTarget.standard)
-        networkPortChecks = await portChecks
-        networkDNSChecks = await dnsChecks
-        networkEndpointChecks = await endpointChecks
-        networkDiagnosticReport = NetworkDiagnosticEngine.report(
-            snapshot: NetworkDiagnosticSnapshot(
+        let ports = await portChecks
+        let dns = await dnsChecks
+        let endpoints = await endpointChecks
+        guard generation == runtimeGeneration, revision == networkDiagnosticRevision,
+              egress == networkEgressKind, !Task.isCancelled else { return }
+        networkPortChecks = ports
+        networkDNSChecks = dns
+        networkEndpointChecks = endpoints
+        let snapshot = NetworkDiagnosticSnapshot(
                 isStarted: isStarted,
                 isSystemProxyEnabled: isSystemProxyEnabled,
                 isTunEnabled: isTunEnabled,
@@ -1178,8 +1538,94 @@ public final class AppStore {
                 dnsChecks: networkDNSChecks,
                 endpointChecks: networkEndpointChecks,
                 coreProcessID: coreService.processIdentifier
-            )
         )
+        networkDiagnosticReport = NetworkDiagnosticEngine.report(snapshot: snapshot)
+        networkDiagnosticReportDate = Date()
+        diagnosticExplanationDate = networkDiagnosticReportDate
+        isDiagnosticExplanationStale = false
+        let context = DiagnosticExplanationContext(
+            snapshot: snapshot, hasSystemProxyError: systemProxyErrorMessage != nil
+        )
+        diagnosticExplanationContext = context
+        diagnosticExplanation = diagnosticExplanationService.ruleExplanation(context: context, language: language)
+        diagnosticExplanationDidFallback = false
+        refreshDiagnosticModelAvailability()
+    }
+
+    public func compareWebsite() async {
+        guard !websiteComparison.isRunning else { return }
+        let revision = networkDiagnosticRevision
+        let systemTunnel = await networkIdentityService.hasActiveSystemTunnel()
+        guard revision == networkDiagnosticRevision, !Task.isCancelled else { return }
+        await websiteComparison.run(context: .init(
+            proxy: isCoreRunning || isStarted ? .init(host: proxyHost, port: httpPort) : nil,
+            mode: selectedMode, hasSystemTunnel: isTunEnabled || systemTunnel
+        ))
+    }
+
+    public func refreshDiagnosticModelAvailability() {
+        diagnosticModelAvailability = diagnosticExplanationService.availability()
+    }
+
+    public func cancelDiagnosticExplanation() {
+        diagnosticExplanationGeneration += 1
+        diagnosticExplanationTask?.cancel()
+        diagnosticExplanationTask = nil
+        isExplainingDiagnosis = false
+    }
+
+    public func explainNetworkDiagnosis() async {
+        guard !isExplainingDiagnosis, !isRunningNetworkDiagnosis,
+              networkDiagnosticReportDate != nil, let context = diagnosticExplanationContext else { return }
+        refreshDiagnosticModelAvailability()
+        diagnosticExplanationGeneration += 1
+        let request = diagnosticExplanationGeneration
+        let revision = networkDiagnosticRevision
+        let requestedLanguage = language
+        let service = diagnosticExplanationService
+        isExplainingDiagnosis = true
+        diagnosticExplanationDidFallback = false
+        let task = Task { [weak self] in
+            defer {
+                if let self, self.diagnosticExplanationGeneration == request {
+                    self.isExplainingDiagnosis = false
+                    self.diagnosticExplanationTask = nil
+                }
+            }
+            do {
+                let explanation = try await service.explain(context: context, language: requestedLanguage)
+                try Task.checkCancellation()
+                guard let self, self.diagnosticExplanationGeneration == request,
+                      self.networkDiagnosticRevision == revision, self.language == requestedLanguage else { return }
+                self.diagnosticExplanation = explanation
+                self.diagnosticExplanationDidFallback = explanation.source == .rules
+            } catch {
+                guard !Task.isCancelled, let self, self.diagnosticExplanationGeneration == request,
+                      self.networkDiagnosticRevision == revision, self.language == requestedLanguage else { return }
+                self.diagnosticExplanation = service.ruleExplanation(context: context, language: requestedLanguage)
+                self.diagnosticExplanationDidFallback = true
+            }
+        }
+        diagnosticExplanationTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func invalidateNetworkDiagnosis() {
+        websiteComparison.invalidate()
+        cancelDiagnosticExplanation()
+        diagnosticExplanationContext = nil
+        isDiagnosticExplanationStale = diagnosticExplanation != nil
+        diagnosticExplanationDidFallback = false
+        networkDiagnosticRevision += 1
+        networkDiagnosticReport = .placeholder
+        networkDiagnosticReportDate = nil
+        networkPortChecks = []
+        networkDNSChecks = []
+        networkEndpointChecks = []
     }
 
     static func speedText(_ bytesPerSecond: Int) -> String {
@@ -1282,9 +1728,9 @@ public final class AppStore {
             // Check the source before taking down a working connection.
             _ = try MihomoConfigurationInspector.inspect(url: profile.managedConfigURL)
             if wasStarted {
-                await stopRuntime(userInitiated: true)
+                guard await stopRuntime(userInitiated: true) else { return false }
             } else if wasCoreRunning {
-                await stopControllerOnly(userInitiated: true)
+                guard await stopControllerOnly(userInitiated: true) else { return false }
             }
             try profileRepository.select(profile.id)
             reloadManagedProfiles()
@@ -1432,7 +1878,15 @@ public final class AppStore {
             selectedMode = settings.mode
             confirmedOutboundMode = settings.mode
             isTunEnabled = settings.tunEnabled
-            controllerURL = URL(string: "http://\(settings.controllerHost):\(settings.controllerPort)")!
+            var controllerComponents = URLComponents()
+            controllerComponents.scheme = "http"
+            controllerComponents.host = settings.controllerHost.contains(":")
+                ? "[\(settings.controllerHost)]" : settings.controllerHost
+            controllerComponents.port = settings.controllerPort
+            guard let configurationControllerURL = controllerComponents.url else {
+                throw ManagedProfileError.validationFailed("Invalid controller address in the selected configuration.")
+            }
+            controllerURL = configurationControllerURL
             controllerSecret = settings.secret
             apiService = MihomoAPIService(
                 requestBuilder: MihomoAPIRequest(baseURL: controllerURL, secret: controllerSecret),
@@ -1465,6 +1919,15 @@ public final class AppStore {
 
     @discardableResult
     private func ensureControllerAvailable(configPath: String) async -> Bool {
+        do {
+            try loadSystemProxyRecoveryIfNeeded()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            return false
+        }
+        if !coreService.isProcessRunning, previousSystemProxySnapshot != nil {
+            guard restorePreviousSystemProxy() else { return false }
+        }
         let wantsPrivilegedTUN = (stagedTunEnabled ?? isTunEnabled) && coreService.supportsPrivilegedTUN
         if wantsPrivilegedTUN, !coreService.isPrivilegedRunning {
             do { try coreService.authorizeTUN() }
@@ -1480,6 +1943,7 @@ public final class AppStore {
         }
 
         if coreService.isProcessRunning {
+            guard restorePreviousSystemProxy() else { return false }
             await coreService.stop(userInitiated: false)
         }
 
@@ -1523,6 +1987,7 @@ public final class AppStore {
                     .last
                     .map(String.init)
                 ?? "Mihomo controller did not become ready at \(controllerURL.absoluteString)."
+            guard restorePreviousSystemProxy() else { return false }
             await coreService.stop(userInitiated: false)
             coreStatus = .failed(failure)
             isStarted = false
@@ -1535,6 +2000,8 @@ public final class AppStore {
         coreStatus = coreService.status
         isCoreRunning = true
         isStarted = false
+        consecutiveControllerFailures = 0
+        startRuntimeMonitorIfNeeded()
         await restoreSavedProxySelections()
         guard coreService.isProcessRunning else {
             handleCoreFailure(coreService.status.failureMessage ?? "Mihomo exited unexpectedly.")
@@ -1542,6 +2009,26 @@ public final class AppStore {
         }
         lastErrorMessage = nil
         return true
+    }
+
+    private func validateRoutingChanges(_ overrides: [RoutingOverride]) async throws {
+        guard isCoreRunning, let profile = selectedManagedProfile else { return }
+        let stagingURL = profileRepository.rootURL
+            .appendingPathComponent(".routing-preview-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
+        let prepared = try runtimeConfigurationPreparer.prepare(
+            sourceURL: profile.managedConfigURL,
+            runtimeDirectoryURL: stagingURL,
+            routingOverrides: overrides,
+            privilegedTUN: coreService.isPrivilegedRunning
+        )
+        try Task.checkCancellation()
+        if case let .failure(message) = await coreService.validateConfig(
+            path: prepared.configURL.path, runtimeDirectoryURL: stagingURL
+        ) {
+            throw ManagedProfileError.validationFailed(message)
+        }
+        try Task.checkCancellation()
     }
 
     private func restartRuntimeForRoutingChangesIfNeeded() async throws {
@@ -1553,14 +2040,18 @@ public final class AppStore {
         }
         if wasStarted {
             stagedOutboundMode = activeMode
-            await stopRuntime(userInitiated: true)
+            guard await stopRuntime(userInitiated: true) else {
+                throw RoutingRuntimeError.restartFailed(lastErrorMessage ?? "Could not restore the system proxy.")
+            }
             if !(await startRuntime(configPath: configPath)) {
                 throw RoutingRuntimeError.restartFailed(
                     lastErrorMessage ?? "Mihomo did not restart with the new routing rules."
                 )
             }
         } else {
-            await stopControllerOnly(userInitiated: true)
+            guard await stopControllerOnly(userInitiated: true) else {
+                throw RoutingRuntimeError.restartFailed(lastErrorMessage ?? "Could not restore the system proxy.")
+            }
             guard await ensureControllerAvailable(configPath: configPath) else {
                 throw RoutingRuntimeError.restartFailed(
                     lastErrorMessage ?? "Mihomo controller did not restart with the new routing rules."
@@ -1586,17 +2077,17 @@ public final class AppStore {
         }
     }
 
-    private func stopRuntime(userInitiated: Bool) async {
+    @discardableResult
+    private func stopRuntime(userInitiated: Bool) async -> Bool {
+        guard restorePreviousSystemProxy() else { return false }
         runtimeGeneration += 1
         stagedOutboundMode = stagedOutboundMode ?? confirmedOutboundMode
         stagedTunEnabled = isTunEnabled
         stopTrafficStream()
-        restorePreviousSystemProxy()
         await coreService.stop(userInitiated: userInitiated)
         coreStatus = coreService.status
         isStarted = false
         isCoreRunning = false
-        isSystemProxyEnabled = false
         runtimeTickCount = 0
         latestUploadBytesPerSecond = 0
         latestDownloadBytesPerSecond = 0
@@ -1604,9 +2095,12 @@ public final class AppStore {
         downloadSpeedText = "0B/s"
         speedSamples = Array(repeating: 0, count: 28)
         await refreshNetworkIdentity()
+        return true
     }
 
-    private func stopControllerOnly(userInitiated: Bool) async {
+    @discardableResult
+    private func stopControllerOnly(userInitiated: Bool) async -> Bool {
+        guard restorePreviousSystemProxy() else { return false }
         runtimeGeneration += 1
         stopTrafficStream()
         await coreService.stop(userInitiated: userInitiated)
@@ -1614,26 +2108,73 @@ public final class AppStore {
         isStarted = false
         isCoreRunning = false
         runtimeTickCount = 0
+        return true
     }
 
-    private func restorePreviousSystemProxy() {
+    @discardableResult
+    private func restorePreviousSystemProxy() -> Bool {
+        do {
+            try loadSystemProxyRecoveryIfNeeded()
+        } catch SystemProxyError.ownedByAnotherInstance where !coreService.isProcessRunning {
+            // Closing a second, idle app must not disconnect the first app.
+            return true
+        } catch {
+            systemProxyErrorMessage = error.localizedDescription
+            return false
+        }
         guard let previousSystemProxySnapshot else {
             isSystemProxyEnabled = false
-            return
+            return true
         }
+        lastProxyRestoreAttempt = .now
         do {
-            try systemProxyService.apply(
-                .restore(service: networkService, snapshot: previousSystemProxySnapshot)
+            let managed = managedSystemProxySnapshot ?? legacyManagedSystemProxySnapshot()
+            try systemProxyService.restore(
+                service: previousSystemProxyService ?? networkService,
+                snapshot: previousSystemProxySnapshot.removingProxy(
+                    host: managed.web.host, httpPort: managed.web.port, socksPort: managed.socks.port
+                ),
+                ownedSnapshot: managed
             )
+            try systemProxyRecoveryRepository.clear()
             self.previousSystemProxySnapshot = nil
+            previousSystemProxyService = nil
+            managedSystemProxySnapshot = nil
             isSystemProxyEnabled = false
+            systemProxyErrorMessage = nil
+            return true
         } catch {
-            lastErrorMessage = error.localizedDescription
+            // Some protocol settings may still point at our listener.
+            isSystemProxyEnabled = true
+            systemProxyErrorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    private func loadSystemProxyRecoveryIfNeeded() throws {
+        guard let recovery = try pendingSystemProxyRecovery() else { return }
+        previousSystemProxySnapshot = recovery.snapshot
+        previousSystemProxyService = recovery.service
+        managedSystemProxySnapshot = recovery.managedProxy
+    }
+
+    private func pendingSystemProxyRecovery() throws -> SystemProxyRecoveryState? {
+        guard previousSystemProxySnapshot == nil,
+              let recovery = try systemProxyRecoveryRepository.load() else { return nil }
+        guard !recovery.isOwnedByRunningProcess else { throw SystemProxyError.ownedByAnotherInstance }
+        return recovery
+    }
+
+    private func legacyManagedSystemProxySnapshot() -> SystemProxySnapshot {
+        // Older receipts predate ownership metadata. The last runtime file
+        // records the ports actually used, including automatic port changes.
+        let settings = try? MihomoConfigurationInspector.inspect(url: profileRepository.runtimeConfigURL)
+        return .enabled(host: proxyHost, httpPort: settings?.httpPort ?? httpPort, socksPort: settings?.socksPort ?? socksPort)
     }
 
     private func waitForController() async -> Bool {
-        for _ in 0..<60 {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while ContinuousClock.now < deadline, !Task.isCancelled {
             guard coreService.isProcessRunning else {
                 coreStatus = coreService.status
                 return false
@@ -1641,7 +2182,8 @@ public final class AppStore {
             if (try? await apiService.data(for: .version)) != nil {
                 return true
             }
-            try? await Task.sleep(for: .milliseconds(250))
+            do { try await Task.sleep(for: .milliseconds(250)) }
+            catch { return false }
         }
         return false
     }

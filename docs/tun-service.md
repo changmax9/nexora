@@ -4,7 +4,7 @@ Nexora includes a signed SMAppService launch daemon for running bundled Mihomo w
 
 ## Local installation
 
-Build with `APP_VERSION=0.2.1 CODE_SIGN_IDENTITY=<Apple signing identity> ./script/build_and_run.sh --stage`, then install `dist/Nexora.app` in Applications. Ad-hoc builds cannot authorize the service. The application, helper and Mihomo must share an Apple signing team. Sign nested executables before signing the bundle; do not use deep signing, which overwrites the helper's required identifier.
+Build with `APP_VERSION=0.2.2 CODE_SIGN_IDENTITY=<Apple signing identity> ./script/build_and_run.sh --stage`, then install `dist/Nexora.app` in Applications. Ad-hoc builds cannot authorize the service. The application, helper and Mihomo must share an Apple signing team. Sign nested executables before signing the bundle; do not use deep signing, which overwrites the helper's required identifier.
 
 Enabling TUN registers the service. macOS may require approval in System Settings → General → Login Items & Extensions. After approval, enable TUN again. The service creates a virtual network interface and changes routing; only perform live verification with the user's authorization.
 
@@ -25,6 +25,6 @@ Resolve the helper using the executable bundle URL, not argv[0], because launchd
 
 ## Packaging
 
-For a local Apple Development signed test image, run `CODE_SIGN_IDENTITY=<identity> APP_BUILD=<increasing build number> ./script/package_release.sh 0.2.1 --local`. This creates a DMG with an Applications shortcut, verifies its checksum, and disables automatic updates. It does not generate an appcast or claim notarization. The current build is arm64 (Apple Silicon).
+For a local Apple Development signed test image, run `CODE_SIGN_IDENTITY=<identity> APP_BUILD=<increasing build number> ./script/package_release.sh 0.2.2 --local`. This creates a DMG with an Applications shortcut, verifies its checksum, and disables automatic updates. It does not generate an appcast or claim notarization. The current build is arm64 (Apple Silicon).
 
 Community packaging uses a local Apple Development identity and rejects ad-hoc signing because the TUN trust boundary requires an Apple signing team. The prebuilt DMG is uploaded to a draft GitHub Release. The manual Release workflow uses the repository's `SPARKLE_PRIVATE_KEY` secret to sign that exact DMG for updates and publish the appcast. Apple Development signing does not satisfy Gatekeeper's normal public distribution policy: users must manually allow the app in Privacy & Security, and TUN requires administrator approval. The TUN installation flow has not been checked on another Mac. A notarized distribution additionally requires Developer ID signing, hardened runtime, notarization submission, and stapling.

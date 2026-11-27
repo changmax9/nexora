@@ -23,6 +23,7 @@ TUN state through Mihomo's controller API.
 - Rule, Global, and Direct outbound modes
 - Per-profile routing overrides
 - Proxy latency testing, live traffic, connection, and log views
+- Website diagnostics comparing direct access and the current Nexora route without disconnecting
 - Menu bar quick access
 - Light, dark, and live system appearance modes
 - English, Simplified Chinese, Traditional Chinese, Japanese, French, Russian,
@@ -42,6 +43,10 @@ Download the current Mihomo core and Geo data:
 ```bash
 ./script/bootstrap.sh
 ```
+
+The bootstrap pins Mihomo v1.19.33 and checks the official release asset's
+SHA-256 before replacing the local core. To use a different release, set both
+`MIHOMO_VERSION` and `MIHOMO_SHA256` to that release's tag and asset digest.
 
 Build and launch the app:
 
@@ -67,7 +72,7 @@ Build the community DMG locally with an Apple signing identity. This keeps the
 app, Mihomo, and the TUN helper signed by the same team:
 
 ```bash
-CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 0.2.1 --community
+CODE_SIGN_IDENTITY="Apple Development: ..." ./script/package_release.sh 0.2.2 --community
 ```
 
 Stage that exact DMG and a source archive in a draft GitHub Release at a tag

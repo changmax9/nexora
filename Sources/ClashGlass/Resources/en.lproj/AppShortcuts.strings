@@ -1,0 +1,11 @@
+/* Nexora Siri and Shortcuts localization. */
+"Connect ${applicationName}" = "Connect ${applicationName}";
+"Turn on ${applicationName}" = "Turn on ${applicationName}";
+"Disconnect ${applicationName}" = "Disconnect ${applicationName}";
+"Turn off ${applicationName}" = "Turn off ${applicationName}";
+"Enable TUN in ${applicationName}" = "Enable TUN in ${applicationName}";
+"Turn on ${applicationName} TUN" = "Turn on ${applicationName} TUN";
+"Disable TUN in ${applicationName}" = "Disable TUN in ${applicationName}";
+"Turn off ${applicationName} TUN" = "Turn off ${applicationName} TUN";
+"Select a node in ${applicationName}" = "Select a node in ${applicationName}";
+"Use ${node} in ${applicationName}" = "Use ${node} in ${applicationName}";

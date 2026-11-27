@@ -16,7 +16,7 @@ MACOS_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 APP_NAME="Nexora"
 BUNDLE_ID="com.maxchang.Nexora"
 MIN_SYSTEM_VERSION="15.0"
-APP_VERSION="${APP_VERSION:-0.2.1}"
+APP_VERSION="${APP_VERSION:-0.2.2}"
 if [[ ! "$APP_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
   echo "error: APP_VERSION must have the form 1.2.3" >&2
   exit 2
@@ -77,6 +77,9 @@ mkdir -p "$APP_RESOURCES"
 mkdir -p "$APP_FRAMEWORKS"
 mkdir -p "$APP_CONTENTS/Library/LaunchDaemons"
 cp "$BUILD_BINARY" "$APP_BINARY"
+if [[ -d "$ROOT_DIR/Sources/ClashGlass/Resources" ]]; then
+  cp -R "$ROOT_DIR/Sources/ClashGlass/Resources/." "$APP_RESOURCES/"
+fi
 cp "$(dirname "$BUILD_BINARY")/NexoraTUNHelper" "$APP_MACOS/NexoraTUNHelper"
 if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
   /usr/bin/strip -S "$APP_BINARY" "$APP_MACOS/NexoraTUNHelper"
@@ -128,6 +131,10 @@ cat >"$INFO_PLIST" <<PLIST
   <string>Nexora</string>
   <key>CFBundleDisplayName</key>
   <string>Nexora</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array><string>en</string><string>zh-Hans</string></array>
   <key>CFBundleShortVersionString</key>
   <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
@@ -171,6 +178,11 @@ cat >"$APP_CONTENTS/Library/LaunchDaemons/com.maxchang.Nexora.TUNHelper.plist" <
   <key>ProcessType</key><string>Interactive</string>
 </dict></plist>
 PLIST
+python3 "$ROOT_DIR/script/extract_app_intents.py" \
+  --build-products "$(dirname "$BUILD_BINARY")" \
+  --resources "$APP_RESOURCES" \
+  --info-plist "$INFO_PLIST" \
+  --sdk "$MACOS_SDK_PATH"
 /usr/bin/codesign --force --sign "$CODE_SIGN_IDENTITY" --identifier com.maxchang.Nexora.TUNHelper "$APP_MACOS/NexoraTUNHelper"
 if [[ -x "$APP_RESOURCES/mihomo" ]]; then
   /usr/bin/codesign --force --sign "$CODE_SIGN_IDENTITY" --identifier com.maxchang.Nexora.mihomo "$APP_RESOURCES/mihomo"

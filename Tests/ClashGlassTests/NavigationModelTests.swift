@@ -212,7 +212,8 @@ import Testing
     #expect(report.severity == .warning)
     #expect(report.summary.contains("System tunnel"))
     #expect(report.findings.contains { $0.title.contains("utun") })
-    #expect(report.suggestedAction == "Turn off the other VPN/TUN, then refresh.")
+    #expect(report.suggestedAction.localizedCaseInsensitiveContains("owns the tunnel"))
+    #expect(!report.suggestedAction.localizedCaseInsensitiveContains("turn off"))
     #expect(report.copyText.contains("203.0.113.41"))
     #expect(report.copyText.contains("System tunnel"))
 }
@@ -238,7 +239,8 @@ import Testing
 
     #expect(report.severity == .warning)
     #expect(report.summary.contains("System tunnel"))
-    #expect(report.suggestedAction == "Turn off the other VPN/TUN, then refresh.")
+    #expect(report.suggestedAction.contains("Nexora"))
+    #expect(!report.suggestedAction.contains("other VPN"))
     #expect(!report.summary.localizedCaseInsensitiveContains("direct egress"))
     #expect(!report.copyText.localizedCaseInsensitiveContains("direct egress"))
 }

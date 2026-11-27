@@ -11,12 +11,12 @@ struct ConnectionsView: View {
             searchText: $query,
             placeholder: "\(store.text(.search)) \(store.text(.connections))",
             actions: [
-                .init(title: store.text(.closeAll), symbol: "trash") {
+                .init(id: "closeAll", title: store.text(.closeAll), symbol: "trash") {
                     Task {
                         await store.closeAllConnections()
                     }
                 },
-                .init(title: store.text(.refresh), symbol: "arrow.clockwise") {
+                .init(id: "refresh", title: store.text(.refresh), symbol: "arrow.clockwise") {
                     Task {
                         await store.refreshConnections()
                     }

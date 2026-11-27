@@ -6,7 +6,7 @@ import SwiftUI
 @main
 struct ClashGlassApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var store = AppStore()
+    @State private var store = AppStore.shared
 
     var body: some Scene {
         WindowGroup("Nexora", id: "main") {
@@ -53,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
     private var menuBarPanelController: MenuBarPanelController?
     private var updateAccessoryController: NSTitlebarAccessoryViewController?
     private var hasPendingUpdateReminder = false
+    private var wakeObserver: NSObjectProtocol?
+    private var automationCatalogObserver: NSObjectProtocol?
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
@@ -72,12 +74,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        store = AppStore.shared
+        store?.recoverSystemProxyAfterRelaunch()
+        NexoraAppShortcuts.updateAppShortcutParameters()
+        automationCatalogObserver = NotificationCenter.default.addObserver(
+            forName: AutomationProxyNode.catalogDidChange, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in NexoraAppShortcuts.updateAppShortcutParameters() }
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         configureWindowsWhenReady()
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.store?.resumeRuntimeAfterWake()
+            }
+        }
+        // A local installer can reconnect without depending on a live chat or
+        // UI automation after replacing a running VPN client.
+        if ProcessInfo.processInfo.arguments.contains("--connect") {
+            Task { @MainActor [weak self] in
+                guard let store = self?.store else { return }
+                do {
+                    try await store.setConnectionEnabledForAutomation(true)
+                } catch {
+                    store.lastErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        store?.shutdownForApplicationTermination() == false ? .terminateCancel : .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        if let automationCatalogObserver { NotificationCenter.default.removeObserver(automationCatalogObserver) }
         store?.shutdownForApplicationTermination()
     }
 
@@ -147,6 +182,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
         true
     }
 
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        // A window can host our gentle reminder; otherwise Sparkle must keep
+        // the update discoverable while Nexora is only running in the menu bar.
+        store == nil || !NSApp.windows.contains { $0.isVisible && $0.canBecomeKey && !($0 is NSPanel) }
+    }
+
     func standardUserDriverWillHandleShowingUpdate(
         _ handleShowingUpdate: Bool,
         forUpdate update: SUAppcastItem,
@@ -161,6 +205,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
         } else {
             hasPendingUpdateReminder = false
             removeUpdateAccessory()
+            if !handleShowingUpdate {
+                // Downloaded updates still need Sparkle's ready-to-install UI.
+                // A user-initiated check always hands presentation to Sparkle.
+                DispatchQueue.main.async { [weak self] in
+                    self?.updaterController.checkForUpdates(nil)
+                }
+            }
         }
     }
 
@@ -174,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
             return
         }
         guard let window = NSApp.windows.first(where: {
-            $0.canBecomeKey && !($0 is NSPanel)
+            $0.isVisible && $0.canBecomeKey && !($0 is NSPanel)
         }) else {
             return
         }

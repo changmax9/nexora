@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "Nexora",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v15)
     ],
@@ -15,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/jpsim/Yams.git", exact: "5.1.3"),
         .package(
             url: "https://github.com/sparkle-project/Sparkle",
-            exact: "2.9.3"
+            exact: "2.10.0"
         )
     ],
     targets: [
@@ -32,7 +33,8 @@ let package = Package(
                 "ClashGlassCore",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/ClashGlass"
+            path: "Sources/ClashGlass",
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "ClashGlassTests",

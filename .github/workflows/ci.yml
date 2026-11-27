@@ -15,5 +15,7 @@ jobs:
       - uses: actions/checkout@v5
       - name: Test
         run: swift test
+      - name: Verify safe core installation
+        run: ./script/test_mihomo_installer.sh
       - name: Release build
         run: swift build -c release

@@ -2,6 +2,37 @@ import Foundation
 import Testing
 @testable import ClashGlassCore
 
+@Test func runtimePortsCannotCollideWithEachOtherOrKeepDuplicateHTTPListeners() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("fixture".utf8).write(to: directory.appendingPathComponent("geoip.dat"))
+    try Data("fixture".utf8).write(to: directory.appendingPathComponent("geosite.dat"))
+    let source = directory.appendingPathComponent("source.yaml")
+    try """
+    port: 7890
+    socks-port: 7890
+    external-controller: '127.0.0.1:7890'
+    dns:
+      enable: true
+      listen: '127.0.0.1:7890'
+    rules: ['MATCH,DIRECT']
+    """.write(to: source, atomically: true, encoding: .utf8)
+    let preparer = RuntimeConfigurationPreparer(
+        geoDataSourceURL: directory,
+        portAllocator: .init(isTCPPortAvailable: { _, _ in true }, isUDPPortAvailable: { _, _ in true })
+    )
+
+    let prepared = try preparer.prepare(sourceURL: source, runtimeDirectoryURL: directory.appendingPathComponent("Runtime"))
+    let yaml = try String(contentsOf: prepared.configURL, encoding: .utf8)
+
+    #expect(prepared.mixedPort == 7890)
+    #expect(prepared.controllerURL.port == 7891)
+    #expect(prepared.dnsListenPort == 7892)
+    #expect(yaml.contains("port: 0"))
+    #expect(yaml.contains("socks-port: 0"))
+}
+
 @Test func proxySelectionRepositoryPersistsPerProfile() throws {
     let rootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
