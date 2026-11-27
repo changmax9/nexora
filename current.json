@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "announcement": {
+    "id": "20261128-nexora-1.0.2",
+    "kind": "update",
+    "title": "Nexora 1.0.2 现已发布",
+    "body": "欢迎升级到 Nexora 1.0.2！本轮更新带来了更灵活的网站分流能力，并全新上线了应用内 Liquid Glass 公告与提示体验：\n\n1. 分流规则支持「指定节点」\n现在可以在「路由」页面为任意网站固定指定具体节点或策略组，支持订阅 provider 节点与子域名优先匹配；在规则列表中即可直接切换出口，节点缺失时也会自动提醒。非规则模式下新增顶部一键切换提示。\n\n2. 全新 Liquid Glass 广播公告\n重要通知、版本说明与维护提醒现将以原生 Liquid Glass 弹窗呈现，支持静默后台刷新且不打扰正常使用。关闭后可随时在「设置 → 关于 → 公告」中重新查看。\n\n3. 更新弹窗与界面交互优化\n「检查更新」结果升级为统一的 Liquid Glass 模态框，并优化了按钮悬停/按压手感和侧边栏无障碍支持。",
+    "publishedAt": "2026-11-27T16:16:34Z",
+    "displayPolicy": "once",
+    "badge": "版本更新",
+    "actionTitle": "查看更新日志",
+    "actionURL": "https://github.com/changmax9/nexora/releases/tag/v1.0.2",
+    "localizations": {
+      "en": {
+        "title": "Nexora 1.0.2 Is Now Available",
+        "body": "Welcome to Nexora 1.0.2! This update introduces per-site node pinning along with native Liquid Glass announcements and dialogs:\n\n1. Pin Websites to a Specific Node\nIn Routing, you can now assign any domain to a specific proxy node or group (including provider nodes), with subdomain-first matching, inline target switching, missing-node warnings, and a one-click switch back to Rule mode.\n\n2. Liquid Glass Broadcast Announcements\nRelease notices and service reminders now appear in a native Liquid Glass modal with silent background refreshes. You can revisit the latest active announcement anytime under Settings → About → Announcement.\n\n3. Polished Dialogs & Controls\nUpdate check prompts now use the unified Liquid Glass modal, with refined button hover/press hit-testing and improved sidebar accessibility.",
+        "badge": "Release Notice",
+        "actionTitle": "Release Notes"
+      }
+    }
+  }
+}
