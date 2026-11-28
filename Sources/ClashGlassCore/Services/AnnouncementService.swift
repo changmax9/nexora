@@ -30,8 +30,12 @@ public struct AnnouncementService: Sendable {
     }
 
     public func fetchLatestAnnouncement() async throws -> Announcement? {
+        try Task.checkCancellation()
+        let limit = AnnouncementDecoder.maximumPayloadBytes
         if let localOverridePath, !localOverridePath.isEmpty {
-            let data = try Data(contentsOf: URL(fileURLWithPath: localOverridePath))
+            let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: localOverridePath))
+            defer { try? file.close() }
+            let data = try file.read(upToCount: limit + 1) ?? Data()
             return try AnnouncementDecoder.decode(data)
         }
 
@@ -48,19 +52,23 @@ public struct AnnouncementService: Sendable {
                     request.setValue("application/vnd.github.raw+json", forHTTPHeaderField: "Accept")
                 }
 
-                let (data, response) = try await session.data(for: request)
+                let (bytes, response) = try await session.bytes(for: request)
+                defer { bytes.task.cancel() }
                 guard let httpResponse = response as? HTTPURLResponse,
                       httpResponse.statusCode == 200 else {
                     let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
                     throw AnnouncementFetchError.unexpectedStatus(statusCode)
                 }
-                guard data.count <= AnnouncementDecoder.maximumPayloadBytes else {
-                    throw AnnouncementDecoder.DecodingError.payloadTooLarge
+                var data = Data()
+                for try await byte in bytes {
+                    guard data.count < limit else { throw AnnouncementDecoder.DecodingError.payloadTooLarge }
+                    data.append(byte)
                 }
                 return try AnnouncementDecoder.decode(data)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                try Task.checkCancellation()
                 lastError = error
             }
         }

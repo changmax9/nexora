@@ -214,6 +214,35 @@ struct AnnouncementTests {
         #expect(localItem?.id == "local-1")
     }
 
+    @Test func announcementServiceEnforcesTheSameByteLimitForFilesAndUnknownLengthResponses() async throws {
+        let url = URL(string: "https://announcement.test/size")!
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [AnnouncementMockURLProtocol.self]
+        let remote = AnnouncementService(feedURLs: [url], session: URLSession(configuration: config), localOverridePath: nil)
+        let preview = AnnouncementService(localOverridePath: file.path)
+        defer { AnnouncementMockURLProtocol.handler.withLock { $0 = nil } }
+        let envelope = Data(#"{"schemaVersion":1,"announcement":null}"#.utf8)
+        for extra in 0...1 {
+            let padding = AnnouncementDecoder.maximumPayloadBytes + extra - envelope.count
+            let data = envelope + Data(repeating: 0x20, count: padding)
+            try data.write(to: file)
+            AnnouncementMockURLProtocol.handler.withLock {
+                $0 = { _ in .success((data, HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!)) }
+            }
+            for service in [remote, preview] {
+                if extra == 0 {
+                    #expect(try await service.fetchLatestAnnouncement() == nil)
+                } else {
+                    await #expect(throws: AnnouncementDecoder.DecodingError.payloadTooLarge) {
+                        try await service.fetchLatestAnnouncement()
+                    }
+                }
+            }
+        }
+    }
+
     @MainActor
     @Test func cachedAnnouncementStartsAndExpiresDuringTheRefreshCooldown() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -52,10 +52,11 @@ struct AnnouncementModalSheet: View {
                 LiquidActionButton(
                     title: actionLabel,
                     symbol: "arrow.up.right.square",
-                    tint: nil
+                    wrapsTitle: true
                 ) {
                     onOpenURL(actionURL)
                 }
+                .help(actionLabel)
             }
 
             LiquidActionButton(
@@ -233,6 +234,23 @@ private struct GlassModalSheet<Actions: View>: View {
 
     private func sheetBody(palette: GlassPalette) -> some View {
         VStack(alignment: .leading, spacing: 18) {
+            ViewThatFits(in: .vertical) {
+                readingContent(palette: palette)
+                ScrollView(.vertical) { readingContent(palette: palette) }
+                    .frame(height: 352)
+            }
+            .frame(maxHeight: 352)
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                actions()
+            }
+            .foregroundStyle(palette.primaryText)
+        }
+    }
+
+    private func readingContent(palette: GlassPalette) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -290,32 +308,13 @@ private struct GlassModalSheet<Actions: View>: View {
 
             Divider().opacity(0.14)
 
-            ViewThatFits(in: .vertical) {
-                bodyText(palette: palette)
-
-                ScrollView(.vertical) {
-                    bodyText(palette: palette)
-                }
-                .scrollIndicators(.automatic)
-                .frame(height: 260)
-            }
-            .frame(maxHeight: 260)
-
-            HStack(spacing: 10) {
-                Spacer(minLength: 0)
-                actions()
-            }
-            .foregroundStyle(palette.primaryText)
+            Text(message)
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .foregroundStyle(palette.secondaryText)
+                .lineSpacing(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
-    }
-
-    private func bodyText(palette: GlassPalette) -> some View {
-        Text(message)
-            .font(.system(size: 14, weight: .medium, design: .rounded))
-            .foregroundStyle(palette.secondaryText)
-            .lineSpacing(6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
     }
 }

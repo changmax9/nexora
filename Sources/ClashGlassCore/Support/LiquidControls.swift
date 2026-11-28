@@ -461,15 +461,25 @@ struct LiquidActionButton: View {
     let symbol: String
     var tint: Color? = nil
     var compact = false
+    var wrapsTitle = false
     let action: () -> Void
 
     var body: some View {
+        let height: CGFloat = compact ? 28 : 34
         Button(action: action) {
-            Label(title, systemImage: symbol)
+            let label = Label(title, systemImage: symbol)
                 .font(.system(size: compact ? 11 : 13, weight: .bold, design: .rounded))
                 .padding(.horizontal, compact ? 10 : 14)
-                .frame(height: compact ? 28 : 34)
-                .fixedSize(horizontal: true, vertical: false)
+            if wrapsTitle {
+                label
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: height)
+            } else {
+                label.frame(height: height)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
         .buttonStyle(LiquidGlassButtonStyle(radius: compact ? 10 : 12, tint: tint))
         .accessibilityLabel(title)
