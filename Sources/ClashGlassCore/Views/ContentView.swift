@@ -14,6 +14,10 @@ public struct ContentView: View {
         let accent = store.accent.color(for: colorScheme)
         let palette = GlassPalette(colorScheme: colorScheme, accent: accent)
         let modal = activeGlassModal
+        let reduceMotion = AppMotionPolicy.reducesMotion(
+            systemPreference: accessibilityReduceMotion,
+            appPreference: store.reduceMotion
+        )
         GeometryReader { geometry in
             let layout = AppChromeLayoutMetrics(
                 availableWidth: Double(geometry.size.width),
@@ -36,30 +40,11 @@ public struct ContentView: View {
             WindowGlassBackground(appearance: store.glassAppearance)
                 .ignoresSafeArea()
         }
-        .overlay {
-            if let modal {
-                ZStack {
-                    Color.black.opacity(colorScheme == .dark ? 0.22 : 0.10)
-                        .contentShape(Rectangle())
-                        .accessibilityHidden(true)
-
-                    modalContent(modal)
-                        .id(modal.id)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea()
-            }
-        }
+        .overlay { modalOverlay(modal, reduceMotion: reduceMotion) }
         .foregroundStyle(palette.primaryText)
         .tint(accent)
         .accentColor(accent)
-        .environment(
-            \.clashGlassReduceMotion,
-            AppMotionPolicy.reducesMotion(
-                systemPreference: accessibilityReduceMotion,
-                appPreference: store.reduceMotion
-            )
-        )
+        .environment(\.clashGlassReduceMotion, reduceMotion)
         .containerBackground(.clear, for: .window)
         .environment(\.nexoraGlassAppearance, store.glassAppearance)
         .alert(
@@ -87,6 +72,40 @@ public struct ContentView: View {
     private var activeGlassModal: ActiveGlassModal? {
         if let result = store.manualUpdateCheckResult { return .updateCheck(result) }
         return store.activeAnnouncement.map(ActiveGlassModal.announcement)
+    }
+
+    private func modalOverlay(_ modal: ActiveGlassModal?, reduceMotion: Bool) -> some View {
+        let transition: AnyTransition = reduceMotion ? .opacity : .asymmetric(
+            insertion: .scale(scale: 0.96).combined(with: .offset(y: 8)).combined(with: .opacity),
+            removal: .scale(scale: 0.985).combined(with: .opacity)
+        )
+        let animation: Animation = if reduceMotion {
+            .easeOut(duration: 0.12)
+        } else if modal == nil {
+            .easeIn(duration: 0.16)
+        } else {
+            .spring(duration: 0.32, bounce: 0)
+        }
+
+        return ZStack {
+            if modal != nil {
+                Color.black.opacity(colorScheme == .dark ? 0.22 : 0.10)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+            if let modal {
+                modalContent(modal)
+                    .id(modal.id)
+                    .transition(transition)
+                    .zIndex(1)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+        .allowsHitTesting(modal != nil)
+        .accessibilityHidden(modal == nil)
+        .animation(animation, value: modal?.id)
     }
 
     @ViewBuilder
