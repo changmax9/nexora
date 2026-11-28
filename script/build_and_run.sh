@@ -16,7 +16,7 @@ MACOS_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 APP_NAME="Nexora"
 BUNDLE_ID="com.maxchang.Nexora"
 MIN_SYSTEM_VERSION="15.0"
-APP_VERSION="${APP_VERSION:-1.0.2}"
+APP_VERSION="${APP_VERSION:-1.1.0}"
 if [[ ! "$APP_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
   echo "error: APP_VERSION must have the form 1.2.3" >&2
   exit 2
