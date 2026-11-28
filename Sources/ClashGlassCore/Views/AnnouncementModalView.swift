@@ -131,6 +131,7 @@ struct UpdateCheckModalSheet: View {
                     title: store.text(.updateWithSparkle),
                     symbol: "arrow.down.circle",
                     tint: tintColor.opacity(0.34),
+                    wrapsTitle: true,
                     action: onInstallUpdate
                 )
                 .keyboardShortcut(.defaultAction)
@@ -234,12 +235,15 @@ private struct GlassModalSheet<Actions: View>: View {
 
     private func sheetBody(palette: GlassPalette) -> some View {
         VStack(alignment: .leading, spacing: 18) {
+            header(palette: palette)
+            Divider().opacity(0.14)
+
             ViewThatFits(in: .vertical) {
-                readingContent(palette: palette)
-                ScrollView(.vertical) { readingContent(palette: palette) }
-                    .frame(height: 352)
+                bodyText(palette: palette)
+                ScrollView(.vertical) { bodyText(palette: palette) }
+                    .frame(height: 250)
             }
-            .frame(maxHeight: 352)
+            .frame(maxHeight: 250)
 
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
@@ -249,72 +253,76 @@ private struct GlassModalSheet<Actions: View>: View {
         }
     }
 
-    private func readingContent(palette: GlassPalette) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(tintColor.opacity(colorScheme == .dark ? 0.22 : 0.14))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .strokeBorder(tintColor.opacity(0.36), lineWidth: 1)
-                        }
-                    Image(systemName: symbol)
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(tintColor)
-                }
-                .frame(width: 44, height: 44)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text(badgeTitle)
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(tintColor)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(tintColor.opacity(colorScheme == .dark ? 0.18 : 0.12))
-                            )
-                            .overlay {
-                                Capsule(style: .continuous)
-                                    .strokeBorder(tintColor.opacity(0.30), lineWidth: 0.8)
-                            }
-
-                        if let metadata {
-                            Text(metadata)
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .monospacedDigit()
-                                .foregroundStyle(palette.tertiaryText)
-                        }
+    private func header(palette: GlassPalette) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(tintColor.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(tintColor.opacity(0.36), lineWidth: 1)
                     }
+                Image(systemName: symbol)
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(tintColor)
+            }
+            .frame(width: 44, height: 44)
 
-                    Text(title)
-                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                        .foregroundStyle(palette.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(badgeTitle)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(tintColor)
+                        .lineLimit(1)
+                        .help(badgeTitle)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(tintColor.opacity(colorScheme == .dark ? 0.18 : 0.12))
+                        )
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .strokeBorder(tintColor.opacity(0.30), lineWidth: 0.8)
+                        }
+
+                    if let metadata {
+                        Text(metadata)
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .fixedSize()
+                            .foregroundStyle(palette.tertiaryText)
+                    }
                 }
 
-                Spacer(minLength: 8)
-
-                LiquidIconButton(
-                    title: closeTitle,
-                    symbol: "xmark",
-                    size: 28,
-                    action: onDismiss
-                )
-                .keyboardShortcut(.cancelAction)
+                Text(title)
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(palette.primaryText)
+                    .lineLimit(3)
+                    .help(title)
+                    .accessibilityAddTraits(.isHeader)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Divider().opacity(0.14)
+            Spacer(minLength: 8)
 
-            Text(message)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(palette.secondaryText)
-                .lineSpacing(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            LiquidIconButton(
+                title: closeTitle,
+                symbol: "xmark",
+                size: 28,
+                action: onDismiss
+            )
+            .keyboardShortcut(.cancelAction)
         }
+    }
+
+    private func bodyText(palette: GlassPalette) -> some View {
+        Text(message)
+            .font(.system(size: 14, weight: .medium, design: .rounded))
+            .foregroundStyle(palette.secondaryText)
+            .lineSpacing(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
     }
 }

@@ -153,14 +153,18 @@ public struct Announcement: Codable, Equatable, Sendable, Identifiable {
     public func resolvedContent(for language: AppLanguage) -> AnnouncementContent {
         let resolvedCode = language.resolvedLanguage.rawValue
         let baseCode = resolvedCode.split(separator: "-").first.map(String.init)
-        let localized = localizations?[resolvedCode]
-            ?? (baseCode.flatMap { localizations?[$0] })
+        let exact = localizations?[resolvedCode]
+        let base = baseCode.flatMap { localizations?[$0] }
+
+        func translation(_ field: KeyPath<AnnouncementLocalization, String?>) -> String? {
+            Self.nonEmptyTrimmed(exact?[keyPath: field]) ?? Self.nonEmptyTrimmed(base?[keyPath: field])
+        }
 
         return AnnouncementContent(
-            title: Self.nonEmptyTrimmed(localized?.title) ?? title,
-            body: Self.nonEmptyTrimmed(localized?.body) ?? body,
-            badge: Self.nonEmptyTrimmed(localized?.badge) ?? Self.nonEmptyTrimmed(badge),
-            actionTitle: Self.nonEmptyTrimmed(localized?.actionTitle) ?? Self.nonEmptyTrimmed(actionTitle)
+            title: translation(\.title) ?? title,
+            body: translation(\.body) ?? body,
+            badge: translation(\.badge) ?? Self.nonEmptyTrimmed(badge),
+            actionTitle: translation(\.actionTitle) ?? Self.nonEmptyTrimmed(actionTitle)
         )
     }
 

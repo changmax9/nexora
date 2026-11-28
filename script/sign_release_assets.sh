@@ -60,6 +60,13 @@ if [[ -z "$ED_SIGNATURE" || -z "$FILE_LENGTH" ]]; then
   exit 1
 fi
 
+NOTES_PATH="$ROOT_DIR/docs/releases/$VERSION.html"
+if [[ -f "$NOTES_PATH" ]]; then
+  RELEASE_NOTES="$(cat "$NOTES_PATH")"
+else
+  RELEASE_NOTES="<p>See the Nexora $VERSION GitHub release for changes and installation instructions.</p>"
+fi
+
 cat >"$APPCAST_PATH" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0"
@@ -70,7 +77,7 @@ cat >"$APPCAST_PATH" <<XML
       <title>Nexora $VERSION</title>
       <pubDate>$(LC_ALL=C date -R)</pubDate>
       <description><![CDATA[
-        <p>See the Nexora $VERSION GitHub release for changes and installation instructions.</p>
+$RELEASE_NOTES
       ]]></description>
       <enclosure
         url="https://github.com/changmax9/nexora/releases/download/v$VERSION/Nexora-$VERSION.dmg"
@@ -83,6 +90,7 @@ cat >"$APPCAST_PATH" <<XML
   </channel>
 </rss>
 XML
+/usr/bin/xmllint --noout "$APPCAST_PATH"
 
 printf '%s' "$SPARKLE_PRIVATE_KEY" \
   | "$SIGN_UPDATE" --ed-key-file - "$APPCAST_PATH"

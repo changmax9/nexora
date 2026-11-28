@@ -118,6 +118,20 @@ struct AnnouncementTests {
         #expect(zhHansContent.badge == "公告")
     }
 
+    @Test func partialChineseLocalizationInheritsMissingFieldsFromChinese() {
+        let notice = Announcement(
+            id: "translation", title: "Update", body: "Read the details.", badge: "Notice",
+            actionTitle: "Open",
+            localizations: [
+                "zh": AnnouncementLocalization(body: "更新内容", badge: "公告"),
+                "zh-Hant": AnnouncementLocalization(title: "版本更新", body: "  "),
+            ]
+        )
+        #expect(notice.resolvedContent(for: .traditionalChinese) == AnnouncementContent(
+            title: "版本更新", body: "更新内容", badge: "公告", actionTitle: "Open"
+        ))
+    }
+
     @Test func dismissalStoreSupportsOnceDailyAndRetentionCap() throws {
         let suiteName = "AnnouncementDismissal-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
